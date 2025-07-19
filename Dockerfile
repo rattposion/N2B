@@ -1,54 +1,43 @@
-# Build stage
+# Dockerfile para Frontend React + Vite
 FROM node:18-alpine AS builder
 
+# Definir diretório de trabalho
 WORKDIR /app
 
-# Copy package files
+# Instalar dependências do sistema
+RUN apk add --no-cache \
+    python3 \
+    make \
+    g++ \
+    && rm -rf /var/cache/apk/*
+
+# Copiar arquivos de dependências
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Instalar dependências
+RUN npm install
 
-# Copy source code
+# Copiar código fonte
 COPY . .
 
-# Generate Prisma client
-RUN npx prisma generate
+# Build da aplicação
+RUN npm run build
 
 # Production stage
-FROM node:18-alpine
+FROM nginx:alpine
 
-WORKDIR /app
+# Copiar build do frontend
+COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
+# Copiar configuração do nginx
+COPY nginx.conf /etc/nginx/nginx.conf
 
-# Copy package files
-COPY package*.json ./
-
-# Install only production dependencies
-RUN npm ci --only=production
-
-# Copy built app from builder stage
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/prisma ./prisma
-
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
-# Change ownership of the app directory
-RUN chown -R nodejs:nodejs /app
-USER nodejs
-
-# Expose port
-EXPOSE 4000
+# Expor porta
+EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node healthcheck.js
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
 
-# Start the app
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["npm", "start"] 
+# Comando de inicialização
+CMD ["nginx", "-g", "daemon off;"] 
