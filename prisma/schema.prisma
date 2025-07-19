@@ -1,0 +1,366 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String
+  domain      String?  @unique
+  plan        String   @default("free")
+  settings    Json     @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  users         User[]
+  bots          Bot[]
+  flows         Flow[]
+  conversations Conversation[]
+  webhooks      N8nWebhook[]
+  integrationLogs N8nIntegrationLog[]
+
+  @@map("companies")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  companyId    String
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("user") // admin, user, client
+  avatar       String?
+  phone        String?
+  isActive     Boolean  @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relacionamentos
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  messages      Message[]
+  createdBots   Bot[]         @relation("BotCreator")
+  createdFlows  Flow[]        @relation("FlowCreator")
+  createdWebhooks N8nWebhook[] @relation("WebhookCreator")
+  notes         ConversationNote[]
+  assignedConversations Conversation[] @relation("ConversationAssignee")
+
+  @@map("users")
+}
+
+model Bot {
+  id              String   @id @default(cuid())
+  companyId       String
+  name            String
+  description     String?
+  avatar          String?
+  welcomeMessage  String?
+  aiModel         String   @default("gpt-4")
+  temperature     Decimal  @default(0.7)
+  maxTokens       Int      @default(1000)
+  systemPrompt    String
+  isActive        Boolean  @default(true)
+  settings        Json     @default("{}")
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relacionamentos
+  company         Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdByUser   User          @relation("BotCreator", fields: [createdBy], references: [id])
+  conversations   Conversation[]
+  flows           Flow[]
+  integrations    Integration[]
+  knowledgeBase   KnowledgeBaseItem[]
+
+  @@map("bots")
+}
+
+model Flow {
+  id          String   @id @default(cuid())
+  companyId   String
+  botId       String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  settings    Json     @default("{}")
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bot           Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+  createdByUser User           @relation("FlowCreator", fields: [createdBy], references: [id])
+  triggers      Trigger[]
+  actions       Action[]
+  conditions    Condition[]
+  executions    FlowExecution[]
+
+  @@map("flows")
+}
+
+model Trigger {
+  id       String @id @default(cuid())
+  flowId   String
+  type     String // message_received, time_based, webhook, etc.
+  config   Json   @default("{}")
+  isActive Boolean @default(true)
+
+  // Relacionamentos
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@map("triggers")
+}
+
+model Action {
+  id       String @id @default(cuid())
+  flowId   String
+  type     String // send_message, webhook, delay, etc.
+  config   Json   @default("{}")
+  order    Int
+  isActive Boolean @default(true)
+
+  // Relacionamentos
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@map("actions")
+}
+
+model Condition {
+  id       String @id @default(cuid())
+  flowId   String
+  type     String // equals, contains, greater_than, etc.
+  field    String
+  value    String
+  order    Int
+  isActive Boolean @default(true)
+
+  // Relacionamentos
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@map("conditions")
+}
+
+model FlowExecution {
+  id          String   @id @default(cuid())
+  flowId      String
+  triggeredBy String
+  status      String   @default("RUNNING") // RUNNING, COMPLETED, FAILED, SKIPPED
+  context     Json     @default("{}")
+  data        Json     @default("{}")
+  results     Json?
+  error       String?
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+
+  // Relacionamentos
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@map("flow_executions")
+}
+
+model Conversation {
+  id          String   @id @default(cuid())
+  companyId   String
+  botId       String
+  userId      String?
+  status      String   @default("ACTIVE") // ACTIVE, RESOLVED, CLOSED
+  channel     String   @default("web") // web, whatsapp, instagram, telegram
+  metadata    Json     @default("{}")
+  tags        String[]
+  assignedTo  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bot           Bot            @relation(fields: [botId], references: [id], onDelete: Cascade)
+  user          User?          @relation(fields: [userId], references: [id])
+  assignedUser  User?          @relation("ConversationAssignee", fields: [assignedTo], references: [id])
+  messages      Message[]
+  notes         ConversationNote[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  content        String
+  type           String   @default("TEXT") // TEXT, IMAGE, AUDIO, FILE
+  isFromBot      Boolean  @default(false)
+  senderId       String?
+  responseTime   Int?     // em milissegundos
+  metadata       Json     @default("{}")
+  createdAt      DateTime @default(now())
+
+  // Relacionamentos
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  MessageAttachment[]
+
+  @@map("messages")
+}
+
+model MessageAttachment {
+  id        String @id @default(cuid())
+  messageId String
+  filename  String
+  url       String
+  type      String
+  size      Int
+  createdAt DateTime @default(now())
+
+  // Relacionamentos
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("message_attachments")
+}
+
+model ConversationNote {
+  id             String   @id @default(cuid())
+  conversationId String
+  content        String
+  isPrivate      Boolean  @default(false)
+  createdBy      String
+  createdAt      DateTime @default(now())
+
+  // Relacionamentos
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdByUser User        @relation(fields: [createdBy], references: [id])
+
+  @@map("conversation_notes")
+}
+
+model Integration {
+  id          String   @id @default(cuid())
+  companyId   String
+  botId       String?
+  type        String   // whatsapp, instagram, telegram, email, etc.
+  name        String
+  config      Json     @default("{}")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bot     Bot?    @relation(fields: [botId], references: [id])
+
+  @@map("integrations")
+}
+
+model KnowledgeBaseItem {
+  id          String   @id @default(cuid())
+  companyId   String
+  botId       String?
+  title       String
+  content     String
+  category    String?
+  tags        String[]
+  embeddings  Json?    // vetores de embedding
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  bot     Bot?    @relation(fields: [botId], references: [id])
+
+  @@map("knowledge_base_items")
+}
+
+model Webhook {
+  id          String   @id @default(cuid())
+  companyId   String
+  name        String
+  url         String
+  events      String[] // array de eventos que o webhook escuta
+  secret      String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("webhooks")
+}
+
+model Analytics {
+  id          String   @id @default(cuid())
+  companyId   String
+  type        String   // conversation, message, user, etc.
+  data        Json
+  date        DateTime
+  createdAt   DateTime @default(now())
+
+  // Relacionamentos
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("analytics")
+}
+
+// Tabelas específicas para integração com n8n
+model N8nWebhook {
+  id          String   @id @default(cuid())
+  companyId   String
+  event       String   // new_conversation, new_message, etc.
+  webhookUrl  String
+  description String?
+  isActive    Boolean  @default(true)
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company       Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdByUser User    @relation("WebhookCreator", fields: [createdBy], references: [id])
+
+  @@map("n8n_webhooks")
+}
+
+model N8nIntegrationLog {
+  id           String   @id @default(cuid())
+  companyId    String
+  event        String
+  webhookUrl   String?
+  status       String   @default("PENDING") // PENDING, SUCCESS, FAILED
+  requestData  Json?
+  responseData Json?
+  responseTime Int?     // em milissegundos
+  error        String?
+  createdAt    DateTime @default(now())
+
+  // Relacionamentos
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("n8n_integration_logs")
+}
+
+model N8nWorkflow {
+  id          String   @id @default(cuid())
+  companyId   String
+  workflowId  String   // ID do workflow no n8n
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  config      Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("n8n_workflows")
+} 
