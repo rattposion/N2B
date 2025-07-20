@@ -21,12 +21,16 @@ interface AIServiceConfig {
 }
 
 export class AIService {
-  private openai: OpenAI;
+  private openai: OpenAI | null = null;
 
   constructor() {
-    this.openai = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY,
-    });
+    if (process.env.OPENAI_API_KEY) {
+      this.openai = new OpenAI({
+        apiKey: process.env.OPENAI_API_KEY,
+      });
+    } else {
+      logger.warn('OPENAI_API_KEY não configurada. Serviços de IA estarão limitados.');
+    }
   }
 
   async generateResponse(
@@ -88,6 +92,15 @@ export class AIService {
     tone: string = 'friendly'
   ): Promise<AIResponse> {
     try {
+      if (!this.openai) {
+        logger.warn('OpenAI não configurado. Retornando resposta padrão.');
+        return {
+          message: 'Desculpe, o serviço de IA não está configurado no momento. Entre em contato com o suporte.',
+          confidence: 0.1,
+          intent: 'general'
+        };
+      }
+
       const systemMessage: OpenAIMessage = {
         role: 'system',
         content: `Você é um assistente de atendimento especializado em vendas e suporte ao cliente.
@@ -123,7 +136,11 @@ ${context ? `Contexto adicional: ${context}` : ''}`
       };
     } catch (error: any) {
       logger.error('Erro no OpenAI', { error: error.message });
-      throw error;
+      return {
+        message: 'Desculpe, estou com dificuldades técnicas no momento. Tente novamente em alguns instantes.',
+        confidence: 0.1,
+        intent: 'error'
+      };
     }
   }
 
@@ -186,6 +203,11 @@ ${context ? `Contexto adicional: ${context}` : ''}`
 
   async generateEmbedding(text: string): Promise<number[]> {
     try {
+      if (!this.openai) {
+        logger.warn('OpenAI não configurado. Retornando embedding vazio.');
+        return new Array(1536).fill(0); // Embedding padrão
+      }
+
       const response = await this.openai.embeddings.create({
         model: 'text-embedding-ada-002',
         input: text,
@@ -194,7 +216,7 @@ ${context ? `Contexto adicional: ${context}` : ''}`
       return response.data[0].embedding;
     } catch (error: any) {
       logger.error('Erro ao gerar embedding', { error: error.message });
-      throw error;
+      return new Array(1536).fill(0); // Embedding padrão em caso de erro
     }
   }
 
@@ -203,6 +225,10 @@ ${context ? `Contexto adicional: ${context}` : ''}`
     try {
       switch (provider) {
         case AIProvider.OPENAI:
+          if (!this.openai) {
+            logger.warn('OpenAI não configurado.');
+            return false;
+          }
           // Testar OpenAI
           const testResponse = await this.openai.chat.completions.create({
             model: 'gpt-3.5-turbo',

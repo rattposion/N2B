@@ -2,9 +2,16 @@ import OpenAI from 'openai';
 import { OpenAIMessage, AIResponse } from '../types';
 import logger from '../utils/logger';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// Criar instância OpenAI apenas se a chave estiver disponível
+let openai: OpenAI | null = null;
+
+if (process.env.OPENAI_API_KEY) {
+  openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+  });
+} else {
+  logger.warn('OPENAI_API_KEY não configurada. Serviços de IA estarão limitados.');
+}
 
 export class OpenAIService {
   async generateResponse(
@@ -13,6 +20,15 @@ export class OpenAIService {
     tone: string = 'friendly'
   ): Promise<AIResponse> {
     try {
+      if (!openai) {
+        logger.warn('OpenAI não configurado. Retornando resposta padrão.');
+        return {
+          message: 'Desculpe, o serviço de IA não está configurado no momento. Entre em contato com o suporte.',
+          confidence: 0.1,
+          intent: 'general'
+        };
+      }
+
       const systemMessage: OpenAIMessage = {
         role: 'system',
         content: `Você é um assistente virtual inteligente e prestativo. 
@@ -40,6 +56,7 @@ export class OpenAIService {
       return {
         message: 'Desculpe, estou com dificuldades técnicas no momento. Tente novamente em alguns instantes.',
         confidence: 0.1,
+        intent: 'general'
       };
     }
   }
@@ -65,6 +82,11 @@ export class OpenAIService {
 
   async generateEmbedding(text: string): Promise<number[]> {
     try {
+      if (!openai) {
+        logger.warn('OpenAI não configurado. Retornando embedding vazio.');
+        return new Array(1536).fill(0); // Embedding padrão
+      }
+
       const response = await openai.embeddings.create({
         model: 'text-embedding-ada-002',
         input: text,
@@ -73,7 +95,7 @@ export class OpenAIService {
       return response.data[0].embedding;
     } catch (error: any) {
       logger.error('Erro ao gerar embedding', { error: error.message });
-      throw error;
+      return new Array(1536).fill(0); // Embedding padrão em caso de erro
     }
   }
 }
