@@ -104,12 +104,21 @@ class WhatsAppQRService {
 
       logger.info('Cliente WhatsApp criado', { sessionId });
 
+      // Promise para aguardar o QR Code
+      let qrCodePromise: Promise<string> | null = null;
+      let qrCodeResolve: ((value: string) => void) | null = null;
+
       // Eventos do cliente WhatsApp
       client.on('qr', async (qr) => {
         try {
           logger.info('QR Code recebido do WhatsApp', { sessionId });
           const qrCodeDataURL = await QRCode.toDataURL(qr);
           session.qrCode = qrCodeDataURL;
+          
+          // Resolver a promise do QR Code
+          if (qrCodeResolve) {
+            qrCodeResolve(qrCodeDataURL);
+          }
           
           // Emitir QR Code via WebSocket
           io.to(`company-${companyId}`).emit('whatsapp-qr-generated', {
@@ -195,6 +204,27 @@ class WhatsAppQRService {
       try {
         await client.initialize();
         logger.info('Cliente WhatsApp inicializado com sucesso', { sessionId });
+        
+        // Aguardar QR Code por até 30 segundos
+        qrCodePromise = new Promise<string>((resolve, reject) => {
+          qrCodeResolve = resolve;
+          
+          // Timeout de 30 segundos
+          setTimeout(() => {
+            if (session.qrCode) {
+              resolve(session.qrCode);
+            } else {
+              reject(new Error('Timeout aguardando QR Code'));
+            }
+          }, 30000);
+        });
+        
+        const qrCode = await qrCodePromise;
+        
+        return {
+          sessionId,
+          qrCode
+        };
       } catch (initError) {
         logger.error('Erro ao inicializar cliente WhatsApp', { 
           error: initError instanceof Error ? initError.message : String(initError),
@@ -206,11 +236,6 @@ class WhatsAppQRService {
         this.sessions.delete(sessionId);
         throw new Error(`Falha ao inicializar WhatsApp: ${initError instanceof Error ? initError.message : String(initError)}`);
       }
-
-      return {
-        sessionId,
-        qrCode: session.qrCode || ''
-      };
     } catch (error) {
       logger.error('Erro ao criar sessão WhatsApp', { 
         error: error instanceof Error ? error.message : String(error), 
@@ -224,14 +249,52 @@ class WhatsAppQRService {
 
   async disconnectSession(sessionId: string): Promise<void> {
     try {
+      logger.info('Iniciando desconexão da sessão', { sessionId });
+      
       const session = this.sessions.get(sessionId);
       if (session) {
-        await session.client.destroy();
+        try {
+          // Verificar se o cliente ainda existe antes de tentar destruí-lo
+          if (session.client && typeof session.client.destroy === 'function') {
+            await session.client.destroy();
+            logger.info('Cliente WhatsApp destruído', { sessionId });
+          } else {
+            logger.warn('Cliente WhatsApp não existe ou não pode ser destruído', { sessionId });
+          }
+        } catch (destroyError) {
+          logger.error('Erro ao destruir cliente WhatsApp', { 
+            error: destroyError instanceof Error ? destroyError.message : String(destroyError), 
+            sessionId 
+          });
+        }
+        
+        // Remover da memória
         this.sessions.delete(sessionId);
-        logger.info('Sessão desconectada com sucesso', { sessionId });
+        logger.info('Sessão removida da memória', { sessionId });
+      } else {
+        logger.warn('Sessão não encontrada na memória', { sessionId });
       }
+
+      // Remover do banco de dados também
+      try {
+        await prisma.whatsAppSession.deleteMany({
+          where: { sessionId }
+        });
+        logger.info('Sessão removida do banco de dados', { sessionId });
+      } catch (dbError) {
+        logger.error('Erro ao remover sessão do banco de dados', { 
+          error: dbError instanceof Error ? dbError.message : String(dbError), 
+          sessionId 
+        });
+      }
+
+      logger.info('Sessão desconectada com sucesso', { sessionId });
     } catch (error) {
-      logger.error('Erro ao desconectar sessão', { error: error instanceof Error ? error.message : String(error), sessionId });
+      logger.error('Erro ao desconectar sessão', { 
+        error: error instanceof Error ? error.message : String(error), 
+        sessionId 
+      });
+      throw error;
     }
   }
 
@@ -295,10 +358,42 @@ class WhatsAppQRService {
         index === self.findIndex(s => s.sessionId === session.sessionId)
       );
 
-      logger.info('Sessões da empresa retornadas', { companyId, count: uniqueSessions.length });
+      // Limpar sessões órfãs do banco (que não estão mais na memória)
+      const memorySessionIds = new Set(memorySessions.map(s => s.sessionId));
+      const orphanedDbSessions = dbSessions.filter(dbSession => !memorySessionIds.has(dbSession.sessionId));
+      
+      if (orphanedDbSessions.length > 0) {
+        logger.info('Limpando sessões órfãs do banco', { 
+          companyId, 
+          orphanedCount: orphanedDbSessions.length,
+          orphanedIds: orphanedDbSessions.map(s => s.sessionId)
+        });
+        
+        // Marcar como inativas em vez de deletar para manter histórico
+        await prisma.whatsAppSession.updateMany({
+          where: {
+            id: { in: orphanedDbSessions.map(s => s.id) }
+          },
+          data: {
+            isActive: false,
+            isConnected: false
+          }
+        });
+      }
+
+      logger.info('Sessões da empresa retornadas', { 
+        companyId, 
+        count: uniqueSessions.length,
+        memoryCount: memorySessions.length,
+        dbCount: dbSessions.length
+      });
+      
       return uniqueSessions;
     } catch (error) {
-      logger.error('Erro ao buscar sessões da empresa', { error: error instanceof Error ? error.message : String(error), companyId });
+      logger.error('Erro ao buscar sessões da empresa', { 
+        error: error instanceof Error ? error.message : String(error), 
+        companyId 
+      });
       return [];
     }
   }
@@ -429,6 +524,67 @@ class WhatsAppQRService {
     } catch (error) {
       logger.error('Erro ao processar mensagem', { error: error instanceof Error ? error.message : String(error) });
     }
+  }
+
+  // Método para limpar sessões antigas e órfãs
+  async cleanupOldSessions(): Promise<void> {
+    try {
+      logger.info('Iniciando limpeza de sessões antigas');
+      
+      // Limpar sessões do banco que estão inativas há mais de 24 horas
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      
+      const deletedSessions = await prisma.whatsAppSession.deleteMany({
+        where: {
+          isActive: false,
+          updatedAt: {
+            lt: twentyFourHoursAgo
+          }
+        }
+      });
+      
+      if (deletedSessions.count > 0) {
+        logger.info('Sessões antigas removidas do banco', { count: deletedSessions.count });
+      }
+      
+      // Limpar sessões da memória que não estão conectadas
+      const disconnectedSessions = Array.from(this.sessions.entries())
+        .filter(([sessionId, session]) => !session.isConnected);
+      
+      disconnectedSessions.forEach(([sessionId, session]) => {
+        try {
+          if (session.client && typeof session.client.destroy === 'function') {
+            session.client.destroy();
+          }
+          this.sessions.delete(sessionId);
+          logger.info('Sessão desconectada removida da memória', { sessionId });
+        } catch (error) {
+          logger.error('Erro ao limpar sessão da memória', { 
+            error: error instanceof Error ? error.message : String(error), 
+            sessionId 
+          });
+        }
+      });
+      
+      logger.info('Limpeza de sessões concluída', { 
+        memorySessionsCount: this.sessions.size,
+        disconnectedSessionsRemoved: disconnectedSessions.length
+      });
+    } catch (error) {
+      logger.error('Erro durante limpeza de sessões', { 
+        error: error instanceof Error ? error.message : String(error) 
+      });
+    }
+  }
+
+  // Método para obter estatísticas das sessões
+  getSessionStats(): { total: number; connected: number; disconnected: number } {
+    const sessions = Array.from(this.sessions.values());
+    return {
+      total: sessions.length,
+      connected: sessions.filter(s => s.isConnected).length,
+      disconnected: sessions.filter(s => !s.isConnected).length
+    };
   }
 }
 
