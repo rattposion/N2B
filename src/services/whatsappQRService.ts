@@ -140,8 +140,15 @@ class WhatsAppQRService {
           session.qrCode = undefined;
           session.phoneNumber = client.info.wid.user;
 
-          // Salvar sessão no banco de dados
-          await this.saveSessionToDatabase(sessionId, sessionName, companyId, session.phoneNumber);
+          // Atualizar sessão no banco de dados com o número de telefone
+          await prisma.whatsAppSession.updateMany({
+            where: { sessionId },
+            data: {
+              phoneNumber: session.phoneNumber,
+              isConnected: true,
+              updatedAt: new Date()
+            }
+          });
 
           // Emitir evento de conexão
           io.to(`company-${companyId}`).emit('whatsapp-connected', {
@@ -227,6 +234,9 @@ class WhatsAppQRService {
           qrCodeLength: qrCode?.length,
           sessionsInMemory: this.sessions.size
         });
+        
+        // Salvar sessão no banco de dados assim que for criada
+        await this.saveInitialSessionToDatabase(sessionId, sessionName, companyId);
         
         return {
           sessionId,
@@ -453,7 +463,7 @@ class WhatsAppQRService {
     }
   }
 
-  private async saveSessionToDatabase(sessionId: string, sessionName: string, companyId: string, phoneNumber: string): Promise<void> {
+  private async saveSessionToDatabase(sessionId: string, sessionName: string, companyId: string, phoneNumber?: string): Promise<void> {
     try {
       await prisma.whatsAppSession.create({
         data: {
@@ -462,12 +472,29 @@ class WhatsAppQRService {
           phoneNumber,
           companyId,
           isActive: true,
-          isConnected: true
+          isConnected: !!phoneNumber // Conectado apenas se tiver phoneNumber
         }
       });
       logger.info('Sessão salva no banco de dados', { sessionId, sessionName, companyId, phoneNumber });
     } catch (error) {
       logger.error('Erro ao salvar sessão no banco', { error: error instanceof Error ? error.message : String(error), sessionId });
+    }
+  }
+
+  private async saveInitialSessionToDatabase(sessionId: string, sessionName: string, companyId: string): Promise<void> {
+    try {
+      await prisma.whatsAppSession.create({
+        data: {
+          sessionId,
+          name: sessionName,
+          companyId,
+          isActive: true,
+          isConnected: false // Inicialmente desconectada
+        }
+      });
+      logger.info('Sessão inicial salva no banco de dados', { sessionId, sessionName, companyId });
+    } catch (error) {
+      logger.error('Erro ao salvar sessão inicial no banco', { error: error instanceof Error ? error.message : String(error), sessionId });
     }
   }
 
