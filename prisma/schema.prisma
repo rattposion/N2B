@@ -1,0 +1,610 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String   @unique
+  plan      Plan     @default(STARTER)
+  settings  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users         User[]
+  bots          Bot[]
+  conversations Conversation[]
+  flows         Flow[]
+  knowledgeBase KnowledgeBase[]
+  channels      Channel[]
+  workflowExecutions WorkflowExecution[]
+  whatsappNumbers WhatsAppNumber[]
+  campaigns     Campaign[]
+  contacts      Contact[]
+  leads         Lead[]
+  aiAssistants AIAssistant[]
+  kanbanBoards KanbanBoard[]
+  adTracking   AdTracking[]
+
+  @@map("companies")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      UserRole @default(OPERATOR)
+  avatar    String?
+  isActive  Boolean  @default(true)
+  lastLogin DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  companyId     String
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  messages      Message[]
+  assignedLeads Lead[]
+  kanbanCards   KanbanCard[]
+
+  @@map("users")
+}
+
+model Bot {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  isActive    Boolean   @default(true)
+  settings    Json      @default("{}")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  companyId     String
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  channels      Channel[]
+  flows         Flow[]
+
+  @@map("bots")
+}
+
+model Channel {
+  id          String      @id @default(uuid())
+  type        ChannelType
+  name        String
+  isActive    Boolean     @default(true)
+  isConnected Boolean     @default(false)
+  credentials Json        @default("{}")
+  settings    Json        @default("{}")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  companyId     String
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  botId         String?
+  bot           Bot?           @relation(fields: [botId], references: [id])
+  conversations Conversation[]
+  messages      Message[]
+
+  @@map("channels")
+}
+
+// Novo modelo para múltiplos números de WhatsApp
+model WhatsAppNumber {
+  id            String   @id @default(uuid())
+  name          String
+  phoneNumber   String   @unique
+  phoneNumberId String   @unique
+  token         String
+  isActive      Boolean  @default(true)
+  settings      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  companyId     String
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  campaigns     Campaign[]
+  webhooks      Webhook[]
+
+  @@map("whatsapp_numbers")
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?
+  phone     String?
+  avatar    String?
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  conversations Conversation[]
+  contacts      Contact[]
+  leads         Lead[]
+
+  @@map("customers")
+}
+
+// Novo modelo para contatos (usado em campanhas)
+model Contact {
+  id        String   @id @default(uuid())
+  name      String
+  phone     String
+  email     String?
+  tags      String[]
+  metadata  Json     @default("{}")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  campaigns CampaignContact[]
+
+  @@map("contacts")
+}
+
+// Novo modelo para campanhas
+model Campaign {
+  id          String        @id @default(uuid())
+  name        String
+  description String?
+  type        CampaignType
+  status      CampaignStatus @default(DRAFT)
+  message     Json          // Conteúdo da mensagem (texto, mídia, etc.)
+  scheduledAt DateTime?
+  sentAt      DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  companyId      String
+  company        Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  whatsappNumberId String?
+  whatsappNumber WhatsAppNumber? @relation(fields: [whatsappNumberId], references: [id])
+  contacts       CampaignContact[]
+  results        CampaignResult[]
+
+  @@map("campaigns")
+}
+
+model CampaignContact {
+  id          String   @id @default(uuid())
+  status      ContactStatus @default(PENDING)
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  error       String?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contactId  String
+  contact    Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, contactId])
+  @@map("campaign_contacts")
+}
+
+model CampaignResult {
+  id        String   @id @default(uuid())
+  metric    String
+  value     Float
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  // Relations
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@map("campaign_results")
+}
+
+// Novo modelo para IA Megan
+model AIAssistant {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  personality String   // Personalidade da IA
+  isActive    Boolean  @default(true)
+  settings    Json     @default("{}")
+  trainingData Json    @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@map("ai_assistants")
+}
+
+// Novo modelo para leads (CRM)
+model Lead {
+  id          String   @id @default(uuid())
+  name        String
+  email       String?
+  phone       String?
+  companyName String?
+  source      String?
+  status      LeadStatus @default(NEW)
+  score       Int      @default(0)
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId String?
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  assignedTo String?
+  assignedUser User? @relation(fields: [assignedTo], references: [id])
+  kanbanCards KanbanCard[]
+  adTracking AdTracking? @relation(fields: [adTrackingId], references: [id])
+  adTrackingId String?
+
+  @@map("leads")
+}
+
+// Novo modelo para Kanban
+model KanbanBoard {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  settings    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  columns    KanbanColumn[]
+
+  @@map("kanban_boards")
+}
+
+model KanbanColumn {
+  id        String   @id @default(uuid())
+  name      String
+  order     Int
+  color     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  boardId String
+  board   KanbanBoard @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  cards   KanbanCard[]
+
+  @@map("kanban_columns")
+}
+
+model KanbanCard {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  order       Int
+  color       String?
+  dueDate     DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  columnId String
+  column   KanbanColumn @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  leadId   String?
+  lead     Lead? @relation(fields: [leadId], references: [id])
+  assignedTo String?
+  assignedUser User? @relation(fields: [assignedTo], references: [id])
+
+  @@map("kanban_cards")
+}
+
+// Novo modelo para rastreamento de anúncios
+model AdTracking {
+  id          String   @id @default(uuid())
+  adId        String
+  adName      String
+  platform    String   // facebook, google, instagram, etc.
+  thumbnail   String?
+  title       String?
+  description String?
+  conversionText String?
+  metadata    Json     @default("{}")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  leads     Lead[]
+
+  @@map("ad_tracking")
+}
+
+model Conversation {
+  id        String            @id @default(uuid())
+  status    ConversationStatus @default(ACTIVE)
+  startedAt DateTime          @default(now())
+  endedAt   DateTime?
+  metadata  Json              @default("{}")
+  rating    Int?
+  feedback  String?
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  // Relations
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  botId      String?
+  bot        Bot?     @relation(fields: [botId], references: [id])
+  channelId  String
+  channel    Channel  @relation(fields: [channelId], references: [id])
+  whatsappNumberId String?
+  whatsappNumber WhatsAppNumber? @relation(fields: [whatsappNumberId], references: [id])
+  aiAssistantId String?
+  aiAssistant AIAssistant? @relation(fields: [aiAssistantId], references: [id])
+  assignedTo String?
+  assignedUser User?  @relation(fields: [assignedTo], references: [id])
+  messages   Message[]
+  workflowExecutions WorkflowExecution[]
+
+  @@map("conversations")
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  content   String
+  type      MessageType @default(TEXT)
+  sender    MessageSender
+  metadata  Json        @default("{}")
+  createdAt DateTime    @default(now())
+
+  // Relations
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  channelId      String
+  channel        Channel      @relation(fields: [channelId], references: [id])
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id])
+
+  @@map("messages")
+}
+
+model Flow {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  triggers    String[]
+  steps       Json     @default("[]")
+  category    String?
+  priority    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  botId     String?
+  bot       Bot?    @relation(fields: [botId], references: [id])
+  executions WorkflowExecution[]
+  workflowSteps WorkflowStep[]
+
+  @@map("flows")
+}
+
+model WorkflowExecution {
+  id        String   @id @default(uuid())
+  status    WorkflowStatus @default(RUNNING)
+  currentStep Int    @default(0)
+  data      Json     @default("{}")
+  result    Json?
+  startedAt DateTime @default(now())
+  endedAt   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  flowId        String
+  flow          Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  companyId     String
+  company       Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_executions")
+}
+
+model WorkflowStep {
+  id          String   @id @default(uuid())
+  name        String
+  type        StepType
+  config      Json     @default("{}")
+  conditions  Json     @default("[]")
+  actions     Json     @default("[]")
+  isActive    Boolean  @default(true)
+  order       Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  flowId String
+  flow   Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@map("workflow_steps")
+}
+
+model KnowledgeBase {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  category  String
+  tags      String[]
+  isActive  Boolean  @default(true)
+  views     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("knowledge_base")
+}
+
+model Analytics {
+  id        String   @id @default(uuid())
+  date      DateTime
+  metric    String
+  value     Float
+  metadata  Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  @@map("analytics")
+}
+
+// Novo modelo para webhooks
+model Webhook {
+  id          String   @id @default(uuid())
+  name        String
+  url         String
+  events      String[]
+  isActive    Boolean  @default(true)
+  secret      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  whatsappNumberId String
+  whatsappNumber   WhatsAppNumber @relation(fields: [whatsappNumberId], references: [id], onDelete: Cascade)
+
+  @@map("webhooks")
+}
+
+// Enums existentes
+enum Plan {
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  OPERATOR
+  VIEWER
+}
+
+enum ChannelType {
+  WHATSAPP
+  TELEGRAM
+  INSTAGRAM
+  WEBCHAT
+  EMAIL
+}
+
+enum ConversationStatus {
+  ACTIVE
+  WAITING
+  CLOSED
+  ARCHIVED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+  LOCATION
+  CONTACT
+  STICKER
+}
+
+enum MessageSender {
+  USER
+  BOT
+  SYSTEM
+}
+
+enum WorkflowStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  PAUSED
+}
+
+enum StepType {
+  MESSAGE
+  CONDITION
+  ACTION
+  DELAY
+  INTENT
+  ENTITY
+  API_CALL
+  DATABASE
+  EMAIL
+  NOTIFICATION
+}
+
+// Novos enums
+enum CampaignType {
+  BULK
+  SCHEDULED
+  TRIGGERED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum ContactStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  CLOSED_WON
+  CLOSED_LOST
+}
