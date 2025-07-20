@@ -21,8 +21,63 @@ class WhatsAppQRService {
     try {
       logger.info('Iniciando criação de sessão WhatsApp', { companyId, sessionName });
       
+      // Verificar se o diretório de sessões existe
+      const fs = require('fs');
+      const path = require('path');
+      const sessionsDir = path.join(process.cwd(), 'sessions', companyId);
+      
+      if (!fs.existsSync(sessionsDir)) {
+        fs.mkdirSync(sessionsDir, { recursive: true });
+        logger.info('Diretório de sessões criado', { sessionsDir });
+      }
+      
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       
+      logger.info('Criando cliente WhatsApp', { sessionId });
+
+      // Configurações mais simples do Puppeteer para evitar problemas
+      const puppeteerArgs = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-first-run',
+        '--disable-extensions',
+        '--disable-plugins',
+        '--disable-images',
+        '--disable-javascript',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-field-trial-config',
+        '--disable-ipc-flooding-protection',
+        '--enable-logging',
+        '--log-level=0',
+        '--silent-launch',
+        '--disable-default-apps',
+        '--disable-sync',
+        '--disable-translate',
+        '--hide-scrollbars',
+        '--mute-audio',
+        '--no-default-browser-check',
+        '--no-experiments',
+        '--no-pings',
+        '--single-process',
+        '--disable-background-networking',
+        '--metrics-recording-only',
+        '--safebrowsing-disable-auto-update',
+        '--ignore-certificate-errors',
+        '--ignore-ssl-errors',
+        '--ignore-certificate-errors-spki-list'
+      ];
+
+      // Verificar se estamos em produção e ajustar configurações
+      if (process.env.NODE_ENV === 'production') {
+        puppeteerArgs.push('--disable-dev-shm-usage');
+        puppeteerArgs.push('--disable-accelerated-2d-canvas');
+        puppeteerArgs.push('--disable-web-security');
+      }
+
       const client = new Client({
         authStrategy: new LocalAuth({
           clientId: sessionId,
@@ -30,53 +85,9 @@ class WhatsAppQRService {
         }),
         puppeteer: {
           headless: true,
-          args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--disable-gpu',
-            '--disable-web-security',
-            '--disable-features=VizDisplayCompositor',
-            '--disable-extensions',
-            '--disable-plugins',
-            '--disable-images',
-            '--disable-javascript',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-field-trial-config',
-            '--disable-ipc-flooding-protection',
-            '--enable-logging',
-            '--log-level=0',
-            '--silent-launch',
-            '--disable-default-apps',
-            '--disable-sync',
-            '--disable-translate',
-            '--hide-scrollbars',
-            '--mute-audio',
-            '--no-default-browser-check',
-            '--no-experiments',
-            '--no-pings',
-            '--no-zygote',
-            '--single-process',
-            '--disable-background-networking',
-            '--disable-default-apps',
-            '--disable-extensions',
-            '--disable-sync',
-            '--disable-translate',
-            '--hide-scrollbars',
-            '--metrics-recording-only',
-            '--mute-audio',
-            '--no-first-run',
-            '--safebrowsing-disable-auto-update',
-            '--ignore-certificate-errors',
-            '--ignore-ssl-errors',
-            '--ignore-certificate-errors-spki-list'
-          ],
-          timeout: 60000
+          args: puppeteerArgs,
+          timeout: 120000, // Aumentar timeout para 2 minutos
+          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
         }
       });
 
@@ -180,8 +191,21 @@ class WhatsAppQRService {
 
       // Inicializar cliente
       logger.info('Inicializando cliente WhatsApp', { sessionId });
-      await client.initialize();
-      logger.info('Cliente WhatsApp inicializado com sucesso', { sessionId });
+      
+      try {
+        await client.initialize();
+        logger.info('Cliente WhatsApp inicializado com sucesso', { sessionId });
+      } catch (initError) {
+        logger.error('Erro ao inicializar cliente WhatsApp', { 
+          error: initError instanceof Error ? initError.message : String(initError),
+          stack: initError instanceof Error ? initError.stack : undefined,
+          sessionId 
+        });
+        
+        // Limpar sessão em caso de erro
+        this.sessions.delete(sessionId);
+        throw new Error(`Falha ao inicializar WhatsApp: ${initError instanceof Error ? initError.message : String(initError)}`);
+      }
 
       return {
         sessionId,

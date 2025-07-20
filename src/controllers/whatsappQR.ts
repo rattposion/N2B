@@ -16,6 +16,7 @@ export class WhatsAppQRController {
       const companyId = req.user!.companyId;
 
       if (!name) {
+        logger.warn('Nome da sessão não fornecido', { body: req.body });
         return res.status(400).json({ 
           error: 'Nome da sessão é obrigatório' 
         });
@@ -23,6 +24,15 @@ export class WhatsAppQRController {
 
       logger.info('Dados validados', { name, companyId });
 
+      // Verificar se o usuário tem companyId
+      if (!companyId) {
+        logger.error('Usuário sem companyId', { user: req.user?.id });
+        return res.status(400).json({ 
+          error: 'Usuário não associado a uma empresa' 
+        });
+      }
+
+      logger.info('Chamando whatsappQRService.createSession', { companyId, name });
       const result = await whatsappQRService.createSession(companyId, name);
 
       logger.info('Sessão WhatsApp criada com sucesso', { 
@@ -41,7 +51,8 @@ export class WhatsAppQRController {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
         body: req.body,
-        user: req.user?.id
+        user: req.user?.id,
+        companyId: req.user?.companyId
       });
       res.status(500).json({ 
         error: 'Erro interno do servidor',
