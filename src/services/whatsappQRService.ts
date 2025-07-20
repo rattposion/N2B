@@ -92,6 +92,9 @@ class WhatsAppQRService {
 
     this.sessions.set(sessionId, session);
 
+    // Salvar sessão no banco de dados ANTES de inicializar
+    await this.saveInitialSessionToDatabase(sessionId, sessionName, companyId);
+
     // Promise para aguardar o QR Code com retry
     const qrCodePromise = new Promise<string>((resolve, reject) => {
       let retryCount = 0;
@@ -104,6 +107,7 @@ class WhatsAppQRService {
               logger.info('QR Code recebido', { sessionId });
               const qrCodeDataURL = await QRCode.toDataURL(qr);
               session.qrCode = qrCodeDataURL;
+              logger.info('QR Code gerado com sucesso', { sessionId, qrCodeLength: qrCodeDataURL.length });
               resolve(qrCodeDataURL);
             } catch (error) {
               logger.error('Erro ao gerar QR Code', { error: error instanceof Error ? error.message : String(error), sessionId });
@@ -161,10 +165,11 @@ class WhatsAppQRService {
             this.handleIncomingMessage(session, message);
           });
 
-          // Timeout de 2 minutos
+          // Timeout de 3 minutos
           setTimeout(() => {
+            logger.error('Timeout aguardando QR Code', { sessionId });
             reject(new Error('Timeout aguardando QR Code'));
-          }, 120000);
+          }, 180000);
           
         } catch (error) {
           logger.error('Erro na inicialização', { error: error instanceof Error ? error.message : String(error), sessionId, retryCount });
@@ -196,8 +201,7 @@ class WhatsAppQRService {
         sessionsInMemory: this.sessions.size
       });
       
-      // Salvar sessão no banco de dados assim que for criada
-      await this.saveInitialSessionToDatabase(sessionId, sessionName, companyId);
+      return { sessionId, qrCode };
       
       return {
         sessionId,
@@ -297,6 +301,7 @@ class WhatsAppQRService {
           sessionId, 
           isConnected: session.isConnected, 
           hasQRCode: !!session.qrCode,
+          qrCodeLength: session.qrCode?.length,
           phoneNumber: session.phoneNumber 
         });
         
