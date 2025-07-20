@@ -33,12 +33,25 @@ export class WhatsAppQRController {
       }
 
       logger.info('Chamando whatsappQRService.createSession', { companyId, name });
+      
+      const startTime = Date.now();
       const result = await whatsappQRService.createSession(companyId, name);
-
+      const endTime = Date.now();
+      
       logger.info('Sessão WhatsApp criada com sucesso', { 
         sessionId: result.sessionId, 
         companyId,
-        hasQRCode: !!result.qrCode
+        hasQRCode: !!result.qrCode,
+        qrCodeLength: result.qrCode?.length,
+        duration: `${endTime - startTime}ms`
+      });
+
+      // Verificar se a sessão foi salva na memória
+      const sessionStats = whatsappQRService.getSessionStats();
+      logger.info('Estatísticas das sessões após criação', { 
+        total: sessionStats.total,
+        connected: sessionStats.connected,
+        disconnected: sessionStats.disconnected
       });
 
       res.json({ 
@@ -68,7 +81,7 @@ export class WhatsAppQRController {
 
       // Verificar se a sessão pertence à empresa
       const sessions = await whatsappQRService.getCompanySessions(companyId);
-      const sessionExists = sessions.find(s => s.sessionId === sessionId);
+      const sessionExists = sessions.find((s: any) => s.sessionId === sessionId);
 
       if (!sessionExists) {
         return res.status(404).json({ error: 'Sessão WhatsApp não encontrada' });
@@ -95,7 +108,7 @@ export class WhatsAppQRController {
 
       // Verificar se a sessão pertence à empresa
       const sessions = await whatsappQRService.getCompanySessions(companyId);
-      const sessionExists = sessions.find(s => s.sessionId === sessionId);
+      const sessionExists = sessions.find((s: any) => s.sessionId === sessionId);
 
       if (!sessionExists) {
         return res.status(404).json({ error: 'Sessão WhatsApp não encontrada' });
@@ -134,7 +147,7 @@ export class WhatsAppQRController {
 
       // Verificar se a sessão pertence à empresa
       const sessions = await whatsappQRService.getCompanySessions(companyId);
-      const sessionExists = sessions.find(s => s.sessionId === sessionId);
+      const sessionExists = sessions.find((s: any) => s.sessionId === sessionId);
 
       if (!sessionExists) {
         return res.status(404).json({ error: 'Sessão WhatsApp não encontrada' });
@@ -155,6 +168,28 @@ export class WhatsAppQRController {
     } catch (error) {
       logger.error('Erro ao enviar mensagem WhatsApp', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  // Métodos adicionais para as rotas administrativas
+  async getSessionStats(req: AuthRequest, res: Response) {
+    try {
+      const stats = whatsappQRService.getSessionStats();
+      res.json({ success: true, stats });
+    } catch (error) {
+      logger.error('Erro ao obter estatísticas', { error });
+      res.status(500).json({ error: 'Erro ao obter estatísticas' });
+    }
+  }
+
+  async cleanupOldSessions(req: AuthRequest, res: Response) {
+    try {
+      await whatsappQRService.cleanupOldSessions();
+      const stats = whatsappQRService.getSessionStats();
+      res.json({ success: true, message: 'Limpeza concluída', stats });
+    } catch (error) {
+      logger.error('Erro ao executar limpeza', { error });
+      res.status(500).json({ error: 'Erro ao executar limpeza' });
     }
   }
 }
