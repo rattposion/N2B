@@ -5,14 +5,15 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "nodemon src/index.ts",
-    "build": "tsc && prisma generate",
+    "build": "tsc",
+    "build:full": "npm run build && prisma generate",
     "start": "node dist/index.js",
-    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "prisma:seed": "ts-node prisma/seed.ts",
-    "db:setup": "prisma migrate deploy && prisma generate && prisma db seed"
+    "db:setup": "prisma migrate deploy && prisma generate && prisma db seed",
+    "postbuild": "prisma generate"
   },
   "dependencies": {
     "@prisma/client": "^5.7.1",
@@ -27,7 +28,7 @@
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.0.0-rc.3",
     "nodemailer": "^6.9.7",
     "openai": "^4.20.1",
     "prisma": "^5.7.1",
