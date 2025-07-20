@@ -28,6 +28,7 @@ model Company {
   channels      Channel[]
   workflowExecutions WorkflowExecution[]
   whatsappNumbers WhatsAppNumber[]
+  whatsappSessions WhatsAppSession[]
   campaigns     Campaign[]
   contacts      Contact[]
   leads         Lead[]
@@ -124,6 +125,27 @@ model WhatsAppNumber {
   webhooks      Webhook[]
 
   @@map("whatsapp_numbers")
+}
+
+// Novo modelo para sessões WhatsApp via QR Code
+model WhatsAppSession {
+  id            String   @id @default(uuid())
+  sessionId     String   @unique
+  name          String
+  phoneNumber   String?
+  isActive      Boolean  @default(true)
+  isConnected   Boolean  @default(false)
+  qrCode        String?
+  settings      Json     @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  companyId     String
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+
+  @@map("whatsapp_sessions")
 }
 
 model Customer {
@@ -374,6 +396,8 @@ model Conversation {
   channel    Channel  @relation(fields: [channelId], references: [id])
   whatsappNumberId String?
   whatsappNumber WhatsAppNumber? @relation(fields: [whatsappNumberId], references: [id])
+  whatsappSessionId String?
+  whatsappSession WhatsAppSession? @relation(fields: [whatsappSessionId], references: [id])
   aiAssistantId String?
   aiAssistant AIAssistant? @relation(fields: [aiAssistantId], references: [id])
   assignedTo String?
