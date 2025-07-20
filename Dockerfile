@@ -11,14 +11,12 @@ RUN apk add --no-cache \
 
 # Copy package files
 COPY package*.json ./
-COPY tsconfig.json ./
 
 # Install dependencies
-RUN npm ci
+RUN npm install
 
 # Copy source code
-COPY src/ ./src/
-COPY prisma/ ./prisma/
+COPY . .
 
 # Generate Prisma client
 RUN npx prisma generate
