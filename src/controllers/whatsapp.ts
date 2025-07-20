@@ -105,14 +105,29 @@ export class WhatsAppController {
 
   async connectWhatsApp(req: AuthRequest, res: Response) {
     try {
+      logger.info('ConnectWhatsApp chamado', { 
+        params: req.params, 
+        method: req.method, 
+        url: req.url,
+        headers: req.headers
+      });
+
       const { id } = req.params;
       const companyId = req.user!.companyId;
+
+      logger.info('Dados extraídos', { id, companyId });
 
       // Verificar se o número pertence à empresa
       const existingNumber = await whatsappService.getWhatsAppNumbers(companyId);
       const numberExists = existingNumber.find(n => n.id === id);
 
+      logger.info('Verificação de número', { 
+        totalNumbers: existingNumber.length, 
+        numberExists: !!numberExists 
+      });
+
       if (!numberExists) {
+        logger.warn('Número de WhatsApp não encontrado', { id, companyId });
         return res.status(404).json({ error: 'Número de WhatsApp não encontrado' });
       }
 
@@ -127,7 +142,7 @@ export class WhatsAppController {
         status: connectionResult.status
       });
     } catch (error: any) {
-      logger.error('Erro ao conectar WhatsApp', { error: error.message });
+      logger.error('Erro ao conectar WhatsApp', { error: error.message, stack: error.stack });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
