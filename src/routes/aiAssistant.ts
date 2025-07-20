@@ -19,4 +19,9 @@ router.post('/:assistantId/chat', aiAssistantController.chatWithAssistant);
 router.post('/:assistantId/train', aiAssistantController.trainAssistant);
 router.get('/:assistantId/conversations', aiAssistantController.getConversationHistory);
 
+// Novas rotas para múltiplos provedores
+router.post('/validate-provider', aiAssistantController.validateProvider);
+router.get('/available-models', aiAssistantController.getAvailableModels);
+router.get('/usage-info', aiAssistantController.getUsageInfo);
+
 export default router; 

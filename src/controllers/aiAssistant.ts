@@ -2,11 +2,8 @@ import { Response } from 'express';
 import { AuthRequest } from '../types';
 import prisma from '../utils/database';
 import logger from '../utils/logger';
-import { OpenAI } from 'openai';
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+import aiService from '../services/aiService';
+import { AIProvider } from '../services/aiService';
 
 export class AIAssistantController {
   async getAssistants(req: AuthRequest, res: Response) {
@@ -81,7 +78,7 @@ export class AIAssistantController {
 
   async createAssistant(req: AuthRequest, res: Response) {
     try {
-      const { name, description, personality, settings, trainingData } = req.body;
+      const { name, description, personality, provider, model, apiKey, settings, trainingData } = req.body;
       const companyId = req.user!.companyId;
 
       if (!name || !personality) {
@@ -95,6 +92,9 @@ export class AIAssistantController {
           name,
           description,
           personality,
+          provider: provider || 'OPENAI',
+          model: model || 'gpt-3.5-turbo',
+          apiKey: apiKey || null,
           settings: settings || {},
           trainingData: trainingData || [],
           companyId
@@ -113,7 +113,7 @@ export class AIAssistantController {
   async updateAssistant(req: AuthRequest, res: Response) {
     try {
       const { id } = req.params;
-      const { name, description, personality, isActive, settings, trainingData } = req.body;
+      const { name, description, personality, provider, model, apiKey, isActive, settings, trainingData } = req.body;
       const companyId = req.user!.companyId;
 
       const assistant = await prisma.aIAssistant.findFirst({
@@ -130,6 +130,9 @@ export class AIAssistantController {
           name,
           description,
           personality,
+          provider,
+          model,
+          apiKey,
           isActive,
           settings,
           trainingData
@@ -202,54 +205,86 @@ export class AIAssistantController {
         // Criar nova conversa
         const customer = await prisma.customer.create({
           data: {
-            name: 'Cliente IA'
+            name: 'Cliente IA',
+            phone: 'IA-' + Date.now()
           }
         });
+
+        const channel = await prisma.channel.findFirst({
+          where: { companyId, type: 'WEBCHAT' }
+        });
+
+        if (!channel) {
+          return res.status(500).json({ error: 'Canal webchat não configurado' });
+        }
 
         conversation = await prisma.conversation.create({
           data: {
             companyId,
             customerId: customer.id,
-            channelId: 'ai-channel', // Canal virtual para IA
-            aiAssistantId: assistantId
+            channelId: channel.id,
+            aiAssistantId: assistantId,
+            status: 'ACTIVE'
           }
         });
       }
 
       // Salvar mensagem do usuário
-      await prisma.message.create({
+      const userMessage = await prisma.message.create({
         data: {
+          conversationId: conversation.id,
+          channelId: conversation.channelId,
           content: message,
           type: 'TEXT',
-          sender: 'USER',
-          conversationId: conversation.id,
-          channelId: conversation.channelId
+          sender: 'USER'
         }
       });
 
-      // Gerar resposta da IA
-      const aiResponse = await this.generateAIResponse(assistant, message, conversation.id);
+      // Gerar resposta da IA usando o serviço unificado
+      const aiResponse = await aiService.generateResponse(
+        [{ role: 'user', content: message }],
+        assistantId
+      );
 
       // Salvar resposta da IA
-      await prisma.message.create({
+      const assistantMessage = await prisma.message.create({
         data: {
-          content: aiResponse,
-          type: 'TEXT',
-          sender: 'BOT',
           conversationId: conversation.id,
-          channelId: conversation.channelId
+          channelId: conversation.channelId,
+          content: aiResponse.message,
+          type: 'TEXT',
+          sender: 'BOT'
         }
       });
 
-      logger.info('Chat com assistente IA', { 
-        assistantId, 
+      logger.info('Chat com assistente IA', {
+        assistantId,
         conversationId: conversation.id,
-        messageLength: message.length 
+        messageLength: message.length,
+        responseLength: aiResponse.message.length
       });
 
-      res.json({ 
-        response: aiResponse,
-        conversationId: conversation.id
+      res.json({
+        conversation: {
+          id: conversation.id,
+          status: conversation.status
+        },
+        messages: [
+          {
+            id: userMessage.id,
+            content: userMessage.content,
+            sender: userMessage.sender,
+            timestamp: userMessage.createdAt
+          },
+          {
+            id: assistantMessage.id,
+            content: assistantMessage.content,
+            sender: assistantMessage.sender,
+            timestamp: assistantMessage.createdAt
+          }
+        ],
+        intent: aiResponse.intent,
+        confidence: aiResponse.confidence
       });
     } catch (error: any) {
       logger.error('Erro no chat com assistente IA', { error: error.message });
@@ -257,79 +292,89 @@ export class AIAssistantController {
     }
   }
 
-  private async generateAIResponse(assistant: any, userMessage: string, conversationId: string): Promise<string> {
+  async validateProvider(req: AuthRequest, res: Response) {
     try {
-      // Buscar histórico da conversa
-      const messages = await prisma.message.findMany({
-        where: { conversationId },
-        orderBy: { createdAt: 'asc' },
-        take: 10 // Últimas 10 mensagens para contexto
+      const { provider, apiKey } = req.body;
+
+      if (!provider) {
+        return res.status(400).json({ error: 'Provedor é obrigatório' });
+      }
+
+      const isValid = await aiService.validateProvider(provider as AIProvider, apiKey);
+
+      res.json({ 
+        provider, 
+        isValid,
+        message: isValid ? 'Provedor configurado corretamente' : 'Erro na configuração do provedor'
       });
-
-      // Construir contexto da conversa
-      const conversationHistory = messages.map(msg => 
-        `${msg.sender === 'USER' ? 'Usuário' : 'Assistente'}: ${msg.content}`
-      ).join('\n');
-
-      // Construir prompt para a IA
-      const systemPrompt = `Você é ${assistant.name}, um assistente virtual com a seguinte personalidade:
-
-${assistant.personality}
-
-Seu objetivo é ajudar o usuário de forma amigável e profissional. Responda sempre em português brasileiro.
-
-Histórico da conversa:
-${conversationHistory}
-
-Usuário: ${userMessage}
-${assistant.name}:`;
-
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userMessage
-          }
-        ],
-        max_tokens: 500,
-        temperature: 0.7
-      });
-
-      return completion.choices[0]?.message?.content || 'Desculpe, não consegui processar sua mensagem.';
     } catch (error: any) {
-      logger.error('Erro ao gerar resposta da IA', { error: error.message });
-      return 'Desculpe, estou enfrentando dificuldades técnicas. Tente novamente em alguns instantes.';
+      logger.error('Erro na validação do provedor', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  async getAvailableModels(req: AuthRequest, res: Response) {
+    try {
+      const { provider } = req.query;
+
+      if (!provider) {
+        return res.status(400).json({ error: 'Provedor é obrigatório' });
+      }
+
+      const models = await aiService.getAvailableModels(provider as AIProvider);
+
+      res.json({ 
+        provider, 
+        models 
+      });
+    } catch (error: any) {
+      logger.error('Erro ao buscar modelos', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  async getUsageInfo(req: AuthRequest, res: Response) {
+    try {
+      const { provider, apiKey } = req.query;
+
+      if (!provider) {
+        return res.status(400).json({ error: 'Provedor é obrigatório' });
+      }
+
+      const usageInfo = await aiService.getUsageInfo(provider as AIProvider, apiKey as string);
+
+      res.json({ 
+        provider, 
+        usageInfo 
+      });
+    } catch (error: any) {
+      logger.error('Erro ao buscar informações de uso', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
 
   async trainAssistant(req: AuthRequest, res: Response) {
     try {
-      const { assistantId } = req.params;
+      const { id } = req.params;
       const { trainingData } = req.body;
       const companyId = req.user!.companyId;
 
       const assistant = await prisma.aIAssistant.findFirst({
-        where: { id: assistantId, companyId }
+        where: { id, companyId }
       });
 
       if (!assistant) {
         return res.status(404).json({ error: 'Assistente IA não encontrado' });
       }
 
-      // Atualizar dados de treinamento
       const updatedAssistant = await prisma.aIAssistant.update({
-        where: { id: assistantId },
+        where: { id },
         data: {
           trainingData: trainingData || []
         }
       });
 
-      logger.info('Assistente IA treinado', { assistantId, companyId });
+      logger.info('Assistente IA treinado', { assistantId: id, companyId });
 
       res.json({ assistant: updatedAssistant });
     } catch (error: any) {
@@ -346,32 +391,29 @@ ${assistant.name}:`;
 
       const skip = (Number(page) - 1) * Number(limit);
 
-      const [conversations, total] = await Promise.all([
-        prisma.conversation.findMany({
-          where: {
-            aiAssistantId: assistantId,
-            companyId
+      const conversations = await prisma.conversation.findMany({
+        where: {
+          aiAssistantId: assistantId,
+          companyId
+        },
+        include: {
+          messages: {
+            orderBy: { createdAt: 'desc' },
+            take: 5
           },
-          include: {
-            customer: true,
-            messages: {
-              orderBy: { createdAt: 'desc' },
-              take: 1
-            }
-          },
-          orderBy: { updatedAt: 'desc' },
-          skip,
-          take: Number(limit)
-        }),
-        prisma.conversation.count({
-          where: {
-            aiAssistantId: assistantId,
-            companyId
-          }
-        })
-      ]);
+          customer: true
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: Number(limit)
+      });
 
-      logger.info('Histórico de conversas obtido', { assistantId, companyId });
+      const total = await prisma.conversation.count({
+        where: {
+          aiAssistantId: assistantId,
+          companyId
+        }
+      });
 
       res.json({
         conversations,
@@ -383,7 +425,7 @@ ${assistant.name}:`;
         }
       });
     } catch (error: any) {
-      logger.error('Erro ao obter histórico de conversas', { error: error.message });
+      logger.error('Erro ao buscar histórico de conversas', { error: error.message });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
