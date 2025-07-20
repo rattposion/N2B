@@ -189,19 +189,19 @@ class AIService {
         // Adicionar base de conhecimento
         if (context.companyData.knowledgeBase?.length > 0) {
           enrichedPrompt += `\n\nBase de Conhecimento:
-${context.companyData.knowledgeBase.map(kb => `- ${kb.title}: ${kb.content}`).join('\n')}`;
+${context.companyData.knowledgeBase.map((kb: any) => `- ${kb.title}: ${kb.content}`).join('\n')}`;
         }
 
         // Adicionar produtos
         if (context.companyData.products?.length > 0) {
           enrichedPrompt += `\n\nProdutos Disponíveis:
-${context.companyData.products.map(p => `- ${p.name}: ${p.description || 'Sem descrição'}`).join('\n')}`;
+${context.companyData.products.map((p: any) => `- ${p.name}: ${p.description || 'Sem descrição'}`).join('\n')}`;
         }
 
         // Adicionar serviços
         if (context.companyData.services?.length > 0) {
           enrichedPrompt += `\n\nServiços Disponíveis:
-${context.companyData.services.map(s => `- ${s.name}: ${s.description || 'Sem descrição'}`).join('\n')}`;
+${context.companyData.services.map((s: any) => `- ${s.name}: ${s.description || 'Sem descrição'}`).join('\n')}`;
         }
       }
     }
@@ -340,10 +340,10 @@ ${context.companyData.services.map(s => `- ${s.name}: ${s.description || 'Sem de
 
     // Detectar produtos/serviços mencionados
     if (context?.companyData?.products) {
-      const mentionedProducts = context.companyData.products.filter(product =>
+      const mentionedProducts = context.companyData.products.filter((product: any) =>
         lowerMessage.includes(product.name.toLowerCase())
       );
-      entities.push(...mentionedProducts.map(p => ({ type: 'product', value: p.name })));
+      entities.push(...mentionedProducts.map((p: any) => ({ type: 'product', value: p.name })));
     }
 
     return { intent, entities, suggestedActions };
