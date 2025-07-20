@@ -6,7 +6,7 @@ import prisma from '../utils/database';
 export class WhatsAppService {
   async sendMessage(whatsappNumberId: string, to: string, message: string): Promise<boolean> {
     try {
-      const whatsappNumber = await prisma.whatsappNumber.findUnique({
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
         where: { id: whatsappNumberId }
       });
 
@@ -47,7 +47,7 @@ export class WhatsAppService {
 
   async sendMediaMessage(whatsappNumberId: string, to: string, mediaUrl: string, caption?: string): Promise<boolean> {
     try {
-      const whatsappNumber = await prisma.whatsappNumber.findUnique({
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
         where: { id: whatsappNumberId }
       });
 
@@ -157,7 +157,7 @@ export class WhatsAppService {
   }
 
   async getWhatsAppNumbers(companyId: string): Promise<any[]> {
-    return await prisma.whatsappNumber.findMany({
+    return await prisma.whatsAppNumber.findMany({
       where: { companyId, isActive: true },
       orderBy: { createdAt: 'desc' }
     });
@@ -171,7 +171,7 @@ export class WhatsAppService {
     companyId: string;
     settings?: any;
   }): Promise<any> {
-    return await prisma.whatsappNumber.create({
+    return await prisma.whatsAppNumber.create({
       data: {
         name: data.name,
         phoneNumber: data.phoneNumber,
@@ -184,14 +184,14 @@ export class WhatsAppService {
   }
 
   async updateWhatsAppNumber(id: string, data: any): Promise<any> {
-    return await prisma.whatsappNumber.update({
+    return await prisma.whatsAppNumber.update({
       where: { id },
       data
     });
   }
 
   async deleteWhatsAppNumber(id: string): Promise<void> {
-    await prisma.whatsappNumber.delete({
+    await prisma.whatsAppNumber.delete({
       where: { id }
     });
   }

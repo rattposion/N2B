@@ -1,27 +1,44 @@
-import { Response } from 'express';
-import { AuthRequest } from '../types';
+import { Request, Response } from 'express';
 import prisma from '../utils/database';
+import logger from '../utils/logger';
 import openaiService from '../services/openai';
 import ttsService from '../services/tts';
-import logger from '../utils/logger';
 
 export class MessagesController {
-  async sendMessage(req: AuthRequest, res: Response) {
+  async getMessages(req: Request, res: Response) {
     try {
-      const { content, conversationId, type = 'TEXT' } = req.body;
-      const userId = req.user?.id;
+      const { conversationId } = req.params;
+      const companyId = (req as any).user.companyId;
 
-      // Find conversation
       const conversation = await prisma.conversation.findFirst({
-        where: {
-          id: conversationId,
-          companyId: req.user?.companyId
-        },
+        where: { id: conversationId, companyId }
+      });
+
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversa não encontrada' });
+      }
+
+      const messages = await prisma.message.findMany({
+        where: { conversationId },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      res.json(messages);
+    } catch (error: any) {
+      logger.error('Erro ao buscar mensagens', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  async sendMessage(req: Request, res: Response) {
+    try {
+      const { conversationId } = req.params;
+      const { content, type = 'TEXT', sender = 'USER' } = req.body;
+      const companyId = (req as any).user.companyId;
+
+      const conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, companyId },
         include: {
-          messages: {
-            orderBy: { createdAt: 'desc' },
-            take: 10
-          },
           bot: true,
           channel: true
         }
@@ -31,156 +48,138 @@ export class MessagesController {
         return res.status(404).json({ error: 'Conversa não encontrada' });
       }
 
-      // Create user message
-      const userMessage = await prisma.message.create({
+      // Create message
+      const message = await prisma.message.create({
         data: {
-          content,
-          type,
-          sender: 'USER',
           conversationId,
           channelId: conversation.channelId,
-          userId
+          content,
+          type,
+          sender,
+          metadata: {}
         }
       });
 
-      // Generate AI response if bot is active
-      let botResponse = null;
-      if (conversation.bot && conversation.status === 'ACTIVE') {
-        try {
-          const messageHistory = conversation.messages.map(msg => ({
-            role: msg.sender === 'USER' ? 'user' as const : 'assistant' as const,
-            content: msg.content
-          }));
+      // Update conversation status
+      await prisma.conversation.update({
+        where: { id: conversationId },
+        data: { status: 'ACTIVE' }
+      });
 
+      // If message is from user and bot exists, generate AI response
+      if (sender === 'USER' && conversation.bot) {
+        try {
+          const botSettings = conversation.bot.settings as any;
+          const voiceEnabled = botSettings?.voiceEnabled || false;
+
+          // Generate AI response
           const aiResponse = await openaiService.generateResponse(
-            [...messageHistory, { role: 'user', content }],
-            'Você é um assistente de atendimento ao cliente.',
-            'friendly'
+            content,
+            conversationId,
+            companyId
           );
 
-          botResponse = await prisma.message.create({
+          // Create AI message
+          const aiMessage = await prisma.message.create({
             data: {
-              content: aiResponse.message,
-              type: 'TEXT',
-              sender: 'BOT',
               conversationId,
               channelId: conversation.channelId,
-              metadata: {
-                confidence: aiResponse.confidence,
-                intent: aiResponse.intent
-              }
+              content: aiResponse.toString(),
+              type: 'TEXT',
+              sender: 'BOT',
+              metadata: {}
             }
           });
 
-          // Generate TTS if enabled
-          if (conversation.bot.settings?.voiceEnabled) {
+          // Generate voice if enabled
+          if (voiceEnabled) {
             try {
-              const ttsResponse = await ttsService.generateSpeech(aiResponse.message);
-              botResponse = await prisma.message.update({
-                where: { id: botResponse.id },
+              const audioUrl = await ttsService.generateSpeech(aiResponse.toString());
+              await prisma.message.create({
                 data: {
-                  metadata: {
-                    ...botResponse.metadata,
-                    audioUrl: ttsResponse.audioUrl,
-                    duration: ttsResponse.duration
-                  }
+                  conversationId,
+                  channelId: conversation.channelId,
+                  content: audioUrl.toString(),
+                  type: 'AUDIO',
+                  sender: 'BOT',
+                  metadata: { originalText: aiResponse.toString() }
                 }
               });
-            } catch (ttsError) {
-              logger.warn('Erro ao gerar TTS', { error: ttsError.message });
+            } catch (ttsError: any) {
+              logger.error('Erro na síntese de voz', { 
+                error: ttsError.message,
+                conversationId 
+              });
             }
           }
-        } catch (aiError) {
-          logger.error('Erro ao gerar resposta da IA', { error: aiError.message });
+
+          res.json({ message, aiMessage });
+        } catch (aiError: any) {
+          logger.error('Erro na geração de resposta IA', { 
+            error: aiError.message,
+            conversationId 
+          });
+          res.json({ message });
         }
+      } else {
+        res.json({ message });
       }
-
-      // Update conversation
-      await prisma.conversation.update({
-        where: { id: conversationId },
-        data: { updatedAt: new Date() }
-      });
-
-      logger.info('Mensagem enviada', { 
-        messageId: userMessage.id, 
-        conversationId,
-        hasBot: !!botResponse 
-      });
-
-      res.json({
-        message: 'Mensagem enviada com sucesso',
-        userMessage,
-        botResponse
-      });
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Erro ao enviar mensagem', { error: error.message });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
 
-  async getMessages(req: AuthRequest, res: Response) {
+  async updateMessage(req: Request, res: Response) {
     try {
-      const { conversationId } = req.params;
-      const { page = 1, limit = 50 } = req.query;
+      const { id } = req.params;
+      const { content } = req.body;
+      const companyId = (req as any).user.companyId;
 
-      const messages = await prisma.message.findMany({
-        where: {
-          conversationId,
-          conversation: {
-            companyId: req.user?.companyId
-          }
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: (Number(page) - 1) * Number(limit),
-        take: Number(limit),
+      const message = await prisma.message.findFirst({
+        where: { id },
         include: {
-          user: {
-            select: { id: true, name: true, avatar: true }
-          }
+          conversation: true
         }
       });
 
-      const total = await prisma.message.count({
-        where: {
-          conversationId,
-          conversation: {
-            companyId: req.user?.companyId
-          }
-        }
+      if (!message || message.conversation.companyId !== companyId) {
+        return res.status(404).json({ error: 'Mensagem não encontrada' });
+      }
+
+      const updatedMessage = await prisma.message.update({
+        where: { id },
+        data: { content }
       });
 
-      res.json({
-        messages: messages.reverse(),
-        pagination: {
-          page: Number(page),
-          limit: Number(limit),
-          total,
-          pages: Math.ceil(total / Number(limit))
-        }
-      });
-    } catch (error) {
-      logger.error('Erro ao buscar mensagens', { error: error.message });
+      res.json(updatedMessage);
+    } catch (error: any) {
+      logger.error('Erro ao atualizar mensagem', { error: error.message });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
 
-  async markAsRead(req: AuthRequest, res: Response) {
+  async deleteMessage(req: Request, res: Response) {
     try {
-      const { conversationId } = req.params;
+      const { id } = req.params;
+      const companyId = (req as any).user.companyId;
 
-      await prisma.conversation.update({
-        where: {
-          id: conversationId,
-          companyId: req.user?.companyId
-        },
-        data: {
-          updatedAt: new Date()
+      const message = await prisma.message.findFirst({
+        where: { id },
+        include: {
+          conversation: true
         }
       });
 
-      res.json({ message: 'Mensagens marcadas como lidas' });
-    } catch (error) {
-      logger.error('Erro ao marcar como lida', { error: error.message });
+      if (!message || message.conversation.companyId !== companyId) {
+        return res.status(404).json({ error: 'Mensagem não encontrada' });
+      }
+
+      await prisma.message.delete({ where: { id } });
+
+      res.json({ message: 'Mensagem deletada com sucesso' });
+    } catch (error: any) {
+      logger.error('Erro ao deletar mensagem', { error: error.message });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }

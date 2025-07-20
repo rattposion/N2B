@@ -286,7 +286,7 @@ export class WorkflowsController {
               select: { id: true, name: true }
             },
             conversation: {
-              select: { id: true, customerName: true }
+                              select: { id: true, customer: { select: { name: true } } }
             }
           },
           orderBy: { createdAt: 'desc' },
@@ -328,7 +328,7 @@ export class WorkflowsController {
             select: { id: true, name: true, steps: true }
           },
           conversation: {
-            select: { id: true, customerName: true, status: true }
+                            select: { id: true, customer: { select: { name: true } }, status: true }
           }
         }
       });
