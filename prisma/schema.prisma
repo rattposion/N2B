@@ -558,6 +558,7 @@ enum MessageSender {
   USER
   BOT
   SYSTEM
+  CUSTOMER
 }
 
 enum WorkflowStatus {

@@ -207,6 +207,38 @@ export class WhatsAppController {
     }
   }
 
+  async sendMessage(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const { to, message } = req.body;
+      const companyId = req.user!.companyId;
+
+      // Verificar se o número pertence à empresa
+      const existingNumber = await whatsappService.getWhatsAppNumbers(companyId);
+      const numberExists = existingNumber.find(n => n.id === id);
+
+      if (!numberExists) {
+        return res.status(404).json({ error: 'Número de WhatsApp não encontrado' });
+      }
+
+      if (!to || !message) {
+        return res.status(400).json({ error: 'Destinatário e mensagem são obrigatórios' });
+      }
+
+      const success = await whatsappService.sendMessage(id, to, message);
+
+      if (success) {
+        logger.info('Mensagem WhatsApp enviada', { numberId: id, to, companyId });
+        res.json({ success: true, message: 'Mensagem enviada com sucesso' });
+      } else {
+        res.status(500).json({ error: 'Erro ao enviar mensagem' });
+      }
+    } catch (error: any) {
+      logger.error('Erro ao enviar mensagem WhatsApp', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
   async sendBulkMessage(req: AuthRequest, res: Response) {
     try {
       const { whatsappNumberId, contacts, message } = req.body;

@@ -19,6 +19,9 @@ router.post('/numbers/:id/disconnect', whatsappController.disconnectWhatsApp);
 router.get('/numbers/:id/qr-code', whatsappController.getQRCode);
 router.get('/numbers/:id/connection-status', whatsappController.getConnectionStatus);
 
+// Rota para envio de mensagem individual
+router.post('/numbers/:id/send', whatsappController.sendMessage);
+
 // Rotas para envio em massa
 router.post('/bulk-send', whatsappController.sendBulkMessage);
 
