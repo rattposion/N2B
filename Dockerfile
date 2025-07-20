@@ -9,22 +9,6 @@ RUN apk add --no-cache \
     harfbuzz \
     ca-certificates \
     ttf-freefont \
-    # Dependências adicionais para melhor compatibilidade
-    libstdc++ \
-    libgcc \
-    libx11 \
-    libxcomposite \
-    libxcursor \
-    libxdamage \
-    libxext \
-    libxfixes \
-    libxi \
-    libxrandr \
-    libxrender \
-    libxss \
-    libxtst \
-    # Fontes adicionais
-    fontconfig \
     && rm -rf /var/cache/apk/*
 
 # Definir variáveis de ambiente para Puppeteer
