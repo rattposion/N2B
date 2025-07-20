@@ -1,49 +1,60 @@
 FROM node:18-alpine
 
-WORKDIR /app
-
-# Install system dependencies for Prisma and Puppeteer
+# Instalar dependências do sistema para Puppeteer
 RUN apk add --no-cache \
-    openssl \
-    ca-certificates \
-    curl \
-    libc6-compat \
     chromium \
     nss \
     freetype \
     freetype-dev \
     harfbuzz \
     ca-certificates \
-    ttf-freefont
+    ttf-freefont \
+    # Dependências adicionais para melhor compatibilidade
+    libstdc++ \
+    libgcc \
+    libx11 \
+    libxcomposite \
+    libxcursor \
+    libxdamage \
+    libxext \
+    libxfixes \
+    libxi \
+    libxrandr \
+    libxrender \
+    libxss \
+    libxtst \
+    # Fontes adicionais
+    fontconfig \
+    && rm -rf /var/cache/apk/*
 
-# Set environment variables for Puppeteer
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+# Definir variáveis de ambiente para Puppeteer
+ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser \
+    NODE_ENV=production
 
-# Copy package files
+# Criar diretório de trabalho
+WORKDIR /app
+
+# Criar diretório de sessões
+RUN mkdir -p /app/sessions
+
+# Copiar arquivos de dependências
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Instalar dependências
+RUN npm ci --only=production
 
-# Copy source code
+# Copiar código fonte
 COPY . .
 
-# Generate Prisma client
+# Gerar Prisma client
 RUN npx prisma generate
 
-# Build TypeScript
-RUN npm run build
+# Definir permissões
+RUN chmod -R 755 /app/sessions
 
-# Create directories
-RUN mkdir -p uploads logs sessions
-
-# Expose port
+# Expor porta
 EXPOSE 3001
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3001/health || exit 1
-
-# Start application
-CMD ["node", "dist/index.js"]
+# Comando para iniciar a aplicação
+CMD ["npm", "start"]
