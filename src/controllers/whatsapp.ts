@@ -103,6 +103,110 @@ export class WhatsAppController {
     }
   }
 
+  async connectWhatsApp(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const companyId = req.user!.companyId;
+
+      // Verificar se o número pertence à empresa
+      const existingNumber = await whatsappService.getWhatsAppNumbers(companyId);
+      const numberExists = existingNumber.find(n => n.id === id);
+
+      if (!numberExists) {
+        return res.status(404).json({ error: 'Número de WhatsApp não encontrado' });
+      }
+
+      const connectionResult = await whatsappService.connectWhatsApp(id);
+
+      logger.info('WhatsApp conectado', { numberId: id, companyId });
+
+      res.json({ 
+        success: true, 
+        message: 'WhatsApp conectado com sucesso',
+        qrCode: connectionResult.qrCode,
+        status: connectionResult.status
+      });
+    } catch (error: any) {
+      logger.error('Erro ao conectar WhatsApp', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  async disconnectWhatsApp(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const companyId = req.user!.companyId;
+
+      // Verificar se o número pertence à empresa
+      const existingNumber = await whatsappService.getWhatsAppNumbers(companyId);
+      const numberExists = existingNumber.find(n => n.id === id);
+
+      if (!numberExists) {
+        return res.status(404).json({ error: 'Número de WhatsApp não encontrado' });
+      }
+
+      await whatsappService.disconnectWhatsApp(id);
+
+      logger.info('WhatsApp desconectado', { numberId: id, companyId });
+
+      res.json({ 
+        success: true, 
+        message: 'WhatsApp desconectado com sucesso' 
+      });
+    } catch (error: any) {
+      logger.error('Erro ao desconectar WhatsApp', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  async getQRCode(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const companyId = req.user!.companyId;
+
+      // Verificar se o número pertence à empresa
+      const existingNumber = await whatsappService.getWhatsAppNumbers(companyId);
+      const numberExists = existingNumber.find(n => n.id === id);
+
+      if (!numberExists) {
+        return res.status(404).json({ error: 'Número de WhatsApp não encontrado' });
+      }
+
+      const qrCode = await whatsappService.getQRCode(id);
+
+      logger.info('QR Code gerado', { numberId: id, companyId });
+
+      res.json({ qrCode });
+    } catch (error: any) {
+      logger.error('Erro ao gerar QR Code', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
+  async getConnectionStatus(req: AuthRequest, res: Response) {
+    try {
+      const { id } = req.params;
+      const companyId = req.user!.companyId;
+
+      // Verificar se o número pertence à empresa
+      const existingNumber = await whatsappService.getWhatsAppNumbers(companyId);
+      const numberExists = existingNumber.find(n => n.id === id);
+
+      if (!numberExists) {
+        return res.status(404).json({ error: 'Número de WhatsApp não encontrado' });
+      }
+
+      const status = await whatsappService.getConnectionStatus(id);
+
+      logger.info('Status de conexão verificado', { numberId: id, companyId, status });
+
+      res.json({ status });
+    } catch (error: any) {
+      logger.error('Erro ao verificar status de conexão', { error: error.message });
+      res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+  }
+
   async sendBulkMessage(req: AuthRequest, res: Response) {
     try {
       const { whatsappNumberId, contacts, message } = req.body;

@@ -3,6 +3,7 @@ import { WhatsAppMessage } from '../types';
 import logger from '../utils/logger';
 import prisma from '../utils/database';
 import { io } from '../index';
+import QRCode from 'qrcode';
 
 export class WhatsAppService {
   async sendMessage(whatsappNumberId: string, to: string, message: string): Promise<boolean> {
@@ -141,6 +142,161 @@ export class WhatsAppService {
     return results;
   }
 
+  async connectWhatsApp(whatsappNumberId: string): Promise<{ qrCode?: string; status: string }> {
+    try {
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+        where: { id: whatsappNumberId }
+      });
+
+      if (!whatsappNumber) {
+        throw new Error('Número de WhatsApp não encontrado');
+      }
+
+      // Verificar se já está conectado
+      if (whatsappNumber.isConnected) {
+        return { status: 'CONNECTED' };
+      }
+
+      // Gerar QR Code para conexão
+      const qrCodeData = `whatsapp://connect?phone=${whatsappNumber.phoneNumber}&token=${whatsappNumber.token}`;
+      const qrCode = await QRCode.toDataURL(qrCodeData);
+
+      // Atualizar status no banco
+      await prisma.whatsAppNumber.update({
+        where: { id: whatsappNumberId },
+        data: { 
+          isConnected: false,
+          qrCode,
+          updatedAt: new Date()
+        }
+      });
+
+      // Emitir evento de status
+      await this.emitConnectionStatus(whatsappNumberId, 'CONNECTING');
+
+      logger.info('QR Code gerado para conexão WhatsApp', { whatsappNumberId });
+
+      return { qrCode, status: 'CONNECTING' };
+    } catch (error: any) {
+      logger.error('Erro ao conectar WhatsApp', { error: error.message, whatsappNumberId });
+      throw error;
+    }
+  }
+
+  async disconnectWhatsApp(whatsappNumberId: string): Promise<void> {
+    try {
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+        where: { id: whatsappNumberId }
+      });
+
+      if (!whatsappNumber) {
+        throw new Error('Número de WhatsApp não encontrado');
+      }
+
+      // Atualizar status no banco
+      await prisma.whatsAppNumber.update({
+        where: { id: whatsappNumberId },
+        data: { 
+          isConnected: false,
+          qrCode: null,
+          updatedAt: new Date()
+        }
+      });
+
+      // Emitir evento de status
+      await this.emitConnectionStatus(whatsappNumberId, 'DISCONNECTED');
+
+      logger.info('WhatsApp desconectado', { whatsappNumberId });
+    } catch (error: any) {
+      logger.error('Erro ao desconectar WhatsApp', { error: error.message, whatsappNumberId });
+      throw error;
+    }
+  }
+
+  async getQRCode(whatsappNumberId: string): Promise<string | null> {
+    try {
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+        where: { id: whatsappNumberId }
+      });
+
+      if (!whatsappNumber) {
+        throw new Error('Número de WhatsApp não encontrado');
+      }
+
+      if (whatsappNumber.isConnected) {
+        return null; // Já conectado, não precisa de QR Code
+      }
+
+      // Se já tem QR Code, retornar
+      if (whatsappNumber.qrCode) {
+        return whatsappNumber.qrCode;
+      }
+
+      // Gerar novo QR Code
+      const qrCodeData = `whatsapp://connect?phone=${whatsappNumber.phoneNumber}&token=${whatsappNumber.token}`;
+      const qrCode = await QRCode.toDataURL(qrCodeData);
+
+      // Salvar QR Code no banco
+      await prisma.whatsAppNumber.update({
+        where: { id: whatsappNumberId },
+        data: { qrCode, updatedAt: new Date() }
+      });
+
+      logger.info('QR Code gerado', { whatsappNumberId });
+
+      return qrCode;
+    } catch (error: any) {
+      logger.error('Erro ao gerar QR Code', { error: error.message, whatsappNumberId });
+      throw error;
+    }
+  }
+
+  async getConnectionStatus(whatsappNumberId: string): Promise<string> {
+    try {
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+        where: { id: whatsappNumberId }
+      });
+
+      if (!whatsappNumber) {
+        throw new Error('Número de WhatsApp não encontrado');
+      }
+
+      // Verificar status real com a API do Facebook
+      try {
+        const response = await axios.get(
+          `https://graph.facebook.com/v18.0/${whatsappNumber.phoneNumberId}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${whatsappNumber.token}`,
+            },
+          }
+        );
+
+        const isConnected = response.data.verified_name !== undefined;
+        
+        // Atualizar status no banco se mudou
+        if (isConnected !== whatsappNumber.isConnected) {
+          await prisma.whatsAppNumber.update({
+            where: { id: whatsappNumberId },
+            data: { 
+              isConnected,
+              qrCode: isConnected ? null : whatsappNumber.qrCode,
+              updatedAt: new Date()
+            }
+          });
+        }
+
+        return isConnected ? 'CONNECTED' : 'DISCONNECTED';
+      } catch (apiError: any) {
+        // Se erro na API, usar status do banco
+        return whatsappNumber.isConnected ? 'CONNECTED' : 'DISCONNECTED';
+      }
+    } catch (error: any) {
+      logger.error('Erro ao verificar status de conexão', { error: error.message, whatsappNumberId });
+      throw error;
+    }
+  }
+
   verifyWebhook(whatsappNumberId: string, mode: string, token: string, challenge: string): string | null {
     // Buscar o webhook específico do número
     if (mode === 'subscribe' && token === process.env.WHATSAPP_VERIFY_TOKEN) {
@@ -248,9 +404,10 @@ export class WhatsAppService {
           channelId: conversation.channelId,
           content: message.text?.body || '',
           type: message.type as any,
-          sender: 'USER',
+          sender: 'CUSTOMER',
           metadata: {
             whatsappMessageId: message.id,
+            from: message.from,
             timestamp: message.timestamp
           }
         }
@@ -259,39 +416,16 @@ export class WhatsAppService {
       // Emitir evento em tempo real
       io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-message-received', {
         conversationId: conversation.id,
-        message: {
-          id: savedMessage.id,
-          content: savedMessage.content,
-          type: savedMessage.type,
-          sender: savedMessage.sender,
-          timestamp: savedMessage.createdAt,
-          customerPhone: message.from
-        },
-        whatsappNumber: {
-          id: whatsappNumber.id,
-          name: whatsappNumber.name,
-          phoneNumber: whatsappNumber.phoneNumber
-        }
+        message: savedMessage,
+        customer,
+        whatsappNumberId: whatsappNumber.id
       });
 
-      // Emitir para sala específica da conversa
-      io.to(`conversation-${conversation.id}`).emit('conversation-message', {
+      logger.info('Mensagem WhatsApp processada', { 
+        messageId: savedMessage.id, 
         conversationId: conversation.id,
-        message: {
-          id: savedMessage.id,
-          content: savedMessage.content,
-          type: savedMessage.type,
-          sender: savedMessage.sender,
-          timestamp: savedMessage.createdAt
-        }
+        from: message.from 
       });
-
-      logger.info('Mensagem WhatsApp processada', {
-        conversationId: conversation.id,
-        messageId: savedMessage.id,
-        customerPhone: message.from
-      });
-
     } catch (error: any) {
       logger.error('Erro ao processar mensagem WhatsApp', { error: error.message });
     }
@@ -299,7 +433,7 @@ export class WhatsAppService {
 
   async getWhatsAppNumbers(companyId: string): Promise<any[]> {
     return await prisma.whatsAppNumber.findMany({
-      where: { companyId, isActive: true },
+      where: { companyId },
       orderBy: { createdAt: 'desc' }
     });
   }
@@ -314,11 +448,9 @@ export class WhatsAppService {
   }): Promise<any> {
     return await prisma.whatsAppNumber.create({
       data: {
-        name: data.name,
-        phoneNumber: data.phoneNumber,
-        phoneNumberId: data.phoneNumberId,
-        token: data.token,
-        companyId: data.companyId,
+        ...data,
+        isActive: true,
+        isConnected: false,
         settings: data.settings || {}
       }
     });
@@ -337,41 +469,31 @@ export class WhatsAppService {
     });
   }
 
-  // Método para emitir status de conexão em tempo real
-  async emitConnectionStatus(whatsappNumberId: string, status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'): Promise<void> {
-    try {
-      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
-        where: { id: whatsappNumberId }
-      });
+  async emitConnectionStatus(whatsappNumberId: string, status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR' | 'CONNECTING'): Promise<void> {
+    const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+      where: { id: whatsappNumberId }
+    });
 
-      if (whatsappNumber) {
-        io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-connection-status', {
-          whatsappNumberId,
-          status,
-          timestamp: new Date()
-        });
-      }
-    } catch (error: any) {
-      logger.error('Erro ao emitir status de conexão', { error: error.message });
+    if (whatsappNumber) {
+      io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-connection-status', {
+        whatsappNumberId,
+        status,
+        timestamp: new Date()
+      });
     }
   }
 
-  // Método para emitir métricas em tempo real
   async emitMetrics(whatsappNumberId: string, metrics: any): Promise<void> {
-    try {
-      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
-        where: { id: whatsappNumberId }
-      });
+    const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+      where: { id: whatsappNumberId }
+    });
 
-      if (whatsappNumber) {
-        io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-metrics', {
-          whatsappNumberId,
-          metrics,
-          timestamp: new Date()
-        });
-      }
-    } catch (error: any) {
-      logger.error('Erro ao emitir métricas', { error: error.message });
+    if (whatsappNumber) {
+      io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-metrics', {
+        whatsappNumberId,
+        metrics,
+        timestamp: new Date()
+      });
     }
   }
 }

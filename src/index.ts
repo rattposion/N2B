@@ -1,10 +1,10 @@
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import dotenv from 'dotenv';
+import { corsMiddleware, allowedOrigins as corsOrigins } from './config/cors';
 
 // Load environment variables
 dotenv.config();
@@ -27,17 +27,6 @@ import logger from './utils/logger';
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server, {
-  cors: {
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    methods: ["GET", "POST"]
-  }
-});
-
-const PORT = process.env.PORT || 3001;
-
-// Middleware
-app.use(helmet());
 
 // CORS Configuration
 const allowedOrigins = [
@@ -53,22 +42,20 @@ if (process.env.FRONTEND_URL) {
   allowedOrigins.push(process.env.FRONTEND_URL);
 }
 
-const corsOptions = {
-  origin: allowedOrigins,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: [
-    'Origin',
-    'X-Requested-With',
-    'Content-Type',
-    'Accept',
-    'Authorization',
-    'Cache-Control'
-  ],
-  exposedHeaders: ['Content-Length', 'X-Total-Count']
-};
+const io = new Server(server, {
+  cors: {
+    origin: corsOrigins,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true
+  }
+});
 
-app.use(cors(corsOptions));
+const PORT = process.env.PORT || 3001;
+
+// Middleware
+app.use(helmet());
+
+app.use(corsMiddleware);
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));

@@ -110,6 +110,8 @@ model WhatsAppNumber {
   phoneNumberId String   @unique
   token         String
   isActive      Boolean  @default(true)
+  isConnected   Boolean  @default(false)
+  qrCode        String?
   settings      Json     @default("{}")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt

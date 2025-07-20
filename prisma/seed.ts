@@ -13,7 +13,7 @@ async function main() {
     create: {
       name: 'Demo Company',
       slug: 'demo-company',
-      plan: 'PROFESSIONAL',
+      plan: 'PRO',
       settings: {
         aiEnabled: true,
         voiceEnabled: true,

@@ -13,6 +13,12 @@ router.post('/numbers', whatsappController.createNumber);
 router.put('/numbers/:id', whatsappController.updateNumber);
 router.delete('/numbers/:id', whatsappController.deleteNumber);
 
+// Rotas para conexão com WhatsApp
+router.post('/numbers/:id/connect', whatsappController.connectWhatsApp);
+router.post('/numbers/:id/disconnect', whatsappController.disconnectWhatsApp);
+router.get('/numbers/:id/qr-code', whatsappController.getQRCode);
+router.get('/numbers/:id/connection-status', whatsappController.getConnectionStatus);
+
 // Rotas para envio em massa
 router.post('/bulk-send', whatsappController.sendBulkMessage);
 
