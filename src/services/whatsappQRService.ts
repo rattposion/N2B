@@ -73,7 +73,7 @@ class WhatsAppQRService {
           '--allow-running-insecure-content',
           '--disable-features=VizDisplayCompositor'
         ],
-        timeout: 180000, // Aumentado para 3 minutos
+        timeout: 180000, // 3 minutos
         defaultViewport: null,
         ignoreHTTPSErrors: true
       }
@@ -95,94 +95,88 @@ class WhatsAppQRService {
 
     // Promise para aguardar o QR Code com retry
     const qrCodePromise = new Promise<string>((resolve, reject) => {
-      let retryCount = 0;
-      const maxRetries = 3;
+      let qrReceived = false;
+      let connected = false;
       
-      const attemptInitialization = async () => {
+      // Configurar event listeners ANTES de inicializar
+      client.on('qr', async (qr) => {
         try {
-          client.on('qr', async (qr) => {
-            try {
-              logger.info('QR Code recebido', { sessionId });
-              const qrCodeDataURL = await QRCode.toDataURL(qr);
-              session.qrCode = qrCodeDataURL;
-              logger.info('QR Code gerado com sucesso', { sessionId, qrCodeLength: qrCodeDataURL.length });
-              resolve(qrCodeDataURL);
-            } catch (error) {
-              logger.error('Erro ao gerar QR Code', { error: error instanceof Error ? error.message : String(error), sessionId });
-              reject(error);
-            }
-          });
-
-          client.on('ready', () => {
-            logger.info('WhatsApp pronto para uso', { sessionId });
-            session.isConnected = true;
-            session.qrCode = undefined;
-            session.phoneNumber = client.info.wid.user;
-
-            // Atualizar sessão no banco de dados com o número de telefone
-            prisma.whatsAppSession.updateMany({
-              where: { sessionId },
-              data: {
-                phoneNumber: session.phoneNumber,
-                isConnected: true,
-                updatedAt: new Date()
-              }
-            }).catch(error => {
-              logger.error('Erro ao atualizar sessão no banco', { error: error instanceof Error ? error.message : String(error), sessionId });
-            });
-
-            // Emitir evento de conexão
-            io.to(`company-${companyId}`).emit('whatsapp-connected', {
-              sessionId,
-              phoneNumber: session.phoneNumber,
-              sessionName
-            });
-
-            logger.info('WhatsApp conectado com sucesso', { 
-              sessionId, 
-              phoneNumber: session.phoneNumber, 
-              companyId,
-              sessionName 
-            });
-            
-            resolve(''); // Conectado sem QR Code
-          });
-
-          client.on('auth_failure', (msg) => {
-            logger.error('Falha na autenticação', { msg, sessionId });
-            reject(new Error('Falha na autenticação'));
-          });
-
-          client.on('disconnected', (reason) => {
-            logger.info('WhatsApp desconectado', { reason, sessionId });
-            session.isConnected = false;
-          });
-
-          // Configurar handlers de mensagens
-          client.on('message', (message) => {
-            this.handleIncomingMessage(session, message);
-          });
-
-          // Timeout de 3 minutos
-          setTimeout(() => {
-            logger.error('Timeout aguardando QR Code', { sessionId });
-            reject(new Error('Timeout aguardando QR Code'));
-          }, 180000);
-          
+          logger.info('QR Code recebido do WhatsApp', { sessionId });
+          const qrCodeDataURL = await QRCode.toDataURL(qr);
+          session.qrCode = qrCodeDataURL;
+          qrReceived = true;
+          logger.info('QR Code gerado com sucesso', { sessionId, qrCodeLength: qrCodeDataURL.length });
+          resolve(qrCodeDataURL);
         } catch (error) {
-          logger.error('Erro na inicialização', { error: error instanceof Error ? error.message : String(error), sessionId, retryCount });
-          
-          if (retryCount < maxRetries) {
-            retryCount++;
-            logger.info('Tentando novamente', { retryCount, sessionId });
-            setTimeout(attemptInitialization, 5000); // Esperar 5 segundos antes de tentar novamente
-          } else {
-            reject(error);
-          }
+          logger.error('Erro ao gerar QR Code', { error: error instanceof Error ? error.message : String(error), sessionId });
+          reject(error);
         }
-      };
-      
-      attemptInitialization();
+      });
+
+      client.on('ready', () => {
+        logger.info('WhatsApp pronto para uso', { sessionId });
+        session.isConnected = true;
+        session.qrCode = undefined;
+        session.phoneNumber = client.info.wid.user;
+        connected = true;
+
+        // Atualizar sessão no banco de dados com o número de telefone
+        prisma.whatsAppSession.updateMany({
+          where: { sessionId },
+          data: {
+            phoneNumber: session.phoneNumber,
+            isConnected: true,
+            updatedAt: new Date()
+          }
+        }).catch(error => {
+          logger.error('Erro ao atualizar sessão no banco', { error: error instanceof Error ? error.message : String(error), sessionId });
+        });
+
+        // Emitir evento de conexão
+        io.to(`company-${companyId}`).emit('whatsapp-connected', {
+          sessionId,
+          phoneNumber: session.phoneNumber,
+          sessionName
+        });
+
+        logger.info('WhatsApp conectado com sucesso', { 
+          sessionId, 
+          phoneNumber: session.phoneNumber, 
+          companyId,
+          sessionName 
+        });
+        
+        if (!qrReceived) {
+          resolve(''); // Conectado sem QR Code
+        }
+      });
+
+      client.on('auth_failure', (msg) => {
+        logger.error('Falha na autenticação', { msg, sessionId });
+        reject(new Error('Falha na autenticação'));
+      });
+
+      client.on('disconnected', (reason) => {
+        logger.info('WhatsApp desconectado', { reason, sessionId });
+        session.isConnected = false;
+      });
+
+      client.on('loading_screen', (percent, message) => {
+        logger.info('Carregando WhatsApp', { percent, message, sessionId });
+      });
+
+      // Configurar handlers de mensagens
+      client.on('message', (message) => {
+        this.handleIncomingMessage(session, message);
+      });
+
+      // Timeout de 3 minutos
+      setTimeout(() => {
+        if (!qrReceived && !connected) {
+          logger.error('Timeout aguardando QR Code ou conexão', { sessionId });
+          reject(new Error('Timeout aguardando QR Code ou conexão'));
+        }
+      }, 180000);
     });
 
     try {
