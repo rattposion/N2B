@@ -35,7 +35,7 @@ export class OpenAIService {
         confidence: 0.9, // Placeholder - could implement confidence scoring
         intent: this.extractIntent(messages[messages.length - 1]?.content || ''),
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Erro no OpenAI Service', { error: error.message });
       return {
         message: 'Desculpe, estou com dificuldades técnicas no momento. Tente novamente em alguns instantes.',
@@ -71,7 +71,7 @@ export class OpenAIService {
       });
 
       return response.data[0].embedding;
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Erro ao gerar embedding', { error: error.message });
       throw error;
     }

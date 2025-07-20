@@ -35,7 +35,7 @@ export class WorkflowEngine {
         return execution;
       }
 
-      const steps = execution.flow.steps as WorkflowStep[];
+      const steps = execution.flow.steps as unknown as WorkflowStep[];
       let currentData = execution.data as WorkflowData;
       let currentStep = execution.currentStep;
 

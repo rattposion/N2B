@@ -25,7 +25,7 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
 
     req.user = user;
     next();
-  } catch (error) {
+  } catch (error: any) {
     logger.error('Erro na autenticação', { error: error.message });
     res.status(401).json({ error: 'Token inválido' });
   }

@@ -168,15 +168,14 @@ export class WhatsAppController {
       const message = whatsappService.parseWebhookMessage(body);
 
       if (message) {
-        // Processar a mensagem recebida
-        logger.info('Mensagem recebida via webhook', { 
+        // Processar a mensagem recebida em tempo real
+        await whatsappService.processIncomingMessage(message);
+        
+        logger.info('Mensagem processada em tempo real', { 
           whatsappNumberId, 
           from: message.from,
           type: message.type 
         });
-
-        // Aqui você pode adicionar lógica para processar a mensagem
-        // Por exemplo, criar uma conversa, executar workflows, etc.
       }
 
       res.status(200).json({ status: 'ok' });

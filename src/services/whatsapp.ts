@@ -2,6 +2,7 @@ import axios from 'axios';
 import { WhatsAppMessage } from '../types';
 import logger from '../utils/logger';
 import prisma from '../utils/database';
+import { io } from '../index';
 
 export class WhatsAppService {
   async sendMessage(whatsappNumberId: string, to: string, message: string): Promise<boolean> {
@@ -28,6 +29,15 @@ export class WhatsAppService {
           },
         }
       );
+
+      // Emitir evento em tempo real
+      io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-message-sent', {
+        whatsappNumberId,
+        to,
+        message,
+        messageId: response.data.messages[0].id,
+        timestamp: new Date()
+      });
 
       logger.info('Mensagem WhatsApp enviada', { 
         whatsappNumberId, 
@@ -73,6 +83,16 @@ export class WhatsAppService {
           },
         }
       );
+
+      // Emitir evento em tempo real
+      io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-media-sent', {
+        whatsappNumberId,
+        to,
+        mediaUrl,
+        caption,
+        messageId: response.data.messages[0].id,
+        timestamp: new Date()
+      });
 
       logger.info('Mídia WhatsApp enviada', { whatsappNumberId, to, mediaUrl });
       return true;
@@ -156,6 +176,127 @@ export class WhatsAppService {
     }
   }
 
+  async processIncomingMessage(message: WhatsAppMessage): Promise<void> {
+    try {
+      // Buscar o número de WhatsApp
+      const whatsappNumber = await prisma.whatsAppNumber.findFirst({
+        where: { phoneNumberId: message.phoneNumberId }
+      });
+
+      if (!whatsappNumber) {
+        logger.error('Número de WhatsApp não encontrado', { phoneNumberId: message.phoneNumberId });
+        return;
+      }
+
+      // Buscar ou criar customer
+      let customer = await prisma.customer.findFirst({
+        where: { phone: message.from }
+      });
+
+      if (!customer) {
+        customer = await prisma.customer.create({
+          data: {
+            name: `Cliente ${message.from}`,
+            phone: message.from
+          }
+        });
+      }
+
+      // Criar ou buscar conversa
+      let conversation = await prisma.conversation.findFirst({
+        where: {
+          whatsappNumberId: whatsappNumber.id,
+          customerId: customer.id
+        }
+      });
+
+      if (!conversation) {
+        // Criar channel se não existir
+        let channel = await prisma.channel.findFirst({
+          where: {
+            companyId: whatsappNumber.companyId,
+            type: 'WHATSAPP'
+          }
+        });
+
+        if (!channel) {
+          channel = await prisma.channel.create({
+            data: {
+              name: 'WhatsApp',
+              type: 'WHATSAPP',
+              companyId: whatsappNumber.companyId,
+              isConnected: true
+            }
+          });
+        }
+
+        conversation = await prisma.conversation.create({
+          data: {
+            whatsappNumberId: whatsappNumber.id,
+            customerId: customer.id,
+            channelId: channel.id,
+            companyId: whatsappNumber.companyId,
+            status: 'ACTIVE'
+          }
+        });
+      }
+
+      // Salvar mensagem
+      const savedMessage = await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          channelId: conversation.channelId,
+          content: message.text?.body || '',
+          type: message.type as any,
+          sender: 'USER',
+          metadata: {
+            whatsappMessageId: message.id,
+            timestamp: message.timestamp
+          }
+        }
+      });
+
+      // Emitir evento em tempo real
+      io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-message-received', {
+        conversationId: conversation.id,
+        message: {
+          id: savedMessage.id,
+          content: savedMessage.content,
+          type: savedMessage.type,
+          sender: savedMessage.sender,
+          timestamp: savedMessage.createdAt,
+          customerPhone: message.from
+        },
+        whatsappNumber: {
+          id: whatsappNumber.id,
+          name: whatsappNumber.name,
+          phoneNumber: whatsappNumber.phoneNumber
+        }
+      });
+
+      // Emitir para sala específica da conversa
+      io.to(`conversation-${conversation.id}`).emit('conversation-message', {
+        conversationId: conversation.id,
+        message: {
+          id: savedMessage.id,
+          content: savedMessage.content,
+          type: savedMessage.type,
+          sender: savedMessage.sender,
+          timestamp: savedMessage.createdAt
+        }
+      });
+
+      logger.info('Mensagem WhatsApp processada', {
+        conversationId: conversation.id,
+        messageId: savedMessage.id,
+        customerPhone: message.from
+      });
+
+    } catch (error: any) {
+      logger.error('Erro ao processar mensagem WhatsApp', { error: error.message });
+    }
+  }
+
   async getWhatsAppNumbers(companyId: string): Promise<any[]> {
     return await prisma.whatsAppNumber.findMany({
       where: { companyId, isActive: true },
@@ -194,6 +335,44 @@ export class WhatsAppService {
     await prisma.whatsAppNumber.delete({
       where: { id }
     });
+  }
+
+  // Método para emitir status de conexão em tempo real
+  async emitConnectionStatus(whatsappNumberId: string, status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR'): Promise<void> {
+    try {
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+        where: { id: whatsappNumberId }
+      });
+
+      if (whatsappNumber) {
+        io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-connection-status', {
+          whatsappNumberId,
+          status,
+          timestamp: new Date()
+        });
+      }
+    } catch (error: any) {
+      logger.error('Erro ao emitir status de conexão', { error: error.message });
+    }
+  }
+
+  // Método para emitir métricas em tempo real
+  async emitMetrics(whatsappNumberId: string, metrics: any): Promise<void> {
+    try {
+      const whatsappNumber = await prisma.whatsAppNumber.findUnique({
+        where: { id: whatsappNumberId }
+      });
+
+      if (whatsappNumber) {
+        io.to(`company-${whatsappNumber.companyId}`).emit('whatsapp-metrics', {
+          whatsappNumberId,
+          metrics,
+          timestamp: new Date()
+        });
+      }
+    } catch (error: any) {
+      logger.error('Erro ao emitir métricas', { error: error.message });
+    }
   }
 }
 

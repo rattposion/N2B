@@ -8,8 +8,9 @@ const router = Router();
 
 router.use(authenticate);
 
-router.post('/', messageLimiter, messageValidation, messagesController.sendMessage);
+router.post('/:conversationId', messageLimiter, messageValidation, messagesController.sendMessage);
 router.get('/:conversationId', messagesController.getMessages);
-router.patch('/:conversationId/read', messagesController.markAsRead);
+router.put('/:id', messagesController.updateMessage);
+router.delete('/:id', messagesController.deleteMessage);
 
 export default router;

@@ -12,7 +12,7 @@ router.get('/whatsapp', (req: Request, res: Response) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  const result = whatsappService.verifyWebhook(mode as string, token as string, challenge as string);
+  const result = whatsappService.verifyWebhook(mode as string, token as string, challenge as string, 'your_verify_token');
   
   if (result) {
     res.status(200).send(result);
@@ -115,14 +115,14 @@ router.post('/whatsapp', async (req: Request, res: Response) => {
         });
 
         // Send response via WhatsApp
-        await whatsappService.sendMessage(message.from, aiResponse.message);
-      } catch (error) {
+        await whatsappService.sendMessage('whatsapp_number_id', message.from, aiResponse.message);
+      } catch (error: any) {
         logger.error('Erro ao processar mensagem WhatsApp', { error: error.message });
       }
     }
 
     res.status(200).send('OK');
-  } catch (error) {
+  } catch (error: any) {
     logger.error('Erro no webhook WhatsApp', { error: error.message });
     res.status(500).send('Error');
   }

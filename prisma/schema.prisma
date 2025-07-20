@@ -227,6 +227,9 @@ model AIAssistant {
   name        String
   description String?
   personality String   // Personalidade da IA
+  provider    AIProvider @default(OPENAI) // Provedor de IA
+  model       String   // Modelo específico (gpt-3.5-turbo, claude-3, etc.)
+  apiKey      String?  // Chave da API (opcional, pode usar chave global)
   isActive    Boolean  @default(true)
   settings    Json     @default("{}")
   trainingData Json    @default("[]")
@@ -607,4 +610,12 @@ enum LeadStatus {
   NEGOTIATION
   CLOSED_WON
   CLOSED_LOST
+}
+
+enum AIProvider {
+  OPENAI
+  OPENROUTER
+  ANTHROPIC
+  GOOGLE
+  AZURE
 }

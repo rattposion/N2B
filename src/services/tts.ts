@@ -43,7 +43,7 @@ export class TTSService {
         audioUrl,
         duration: Math.ceil(text.length / 10), // Rough estimation
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Erro no TTS Service', { error: error.message });
       throw error;
     }
@@ -58,7 +58,7 @@ export class TTSService {
       });
 
       return response.data.voices;
-    } catch (error) {
+    } catch (error: any) {
       logger.error('Erro ao buscar vozes disponíveis', { error: error.message });
       return [];
     }
