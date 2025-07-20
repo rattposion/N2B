@@ -6,6 +6,12 @@ import logger from '../utils/logger';
 export class WhatsAppQRController {
   async createSession(req: AuthRequest, res: Response) {
     try {
+      logger.info('Criando sessão WhatsApp', { 
+        body: req.body, 
+        user: req.user?.id,
+        companyId: req.user?.companyId 
+      });
+
       const { name } = req.body;
       const companyId = req.user!.companyId;
 
@@ -15,18 +21,32 @@ export class WhatsAppQRController {
         });
       }
 
+      logger.info('Dados validados', { name, companyId });
+
       const result = await whatsappQRService.createSession(companyId, name);
 
-      logger.info('Sessão WhatsApp criada', { sessionId: result.sessionId, companyId });
+      logger.info('Sessão WhatsApp criada com sucesso', { 
+        sessionId: result.sessionId, 
+        companyId,
+        hasQRCode: !!result.qrCode
+      });
 
       res.json({ 
         success: true, 
         sessionId: result.sessionId,
         qrCode: result.qrCode
       });
-    } catch (error: any) {
-      logger.error('Erro ao criar sessão WhatsApp', { error: error.message });
-      res.status(500).json({ error: 'Erro interno do servidor' });
+    } catch (error) {
+      logger.error('Erro ao criar sessão WhatsApp', { 
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        body: req.body,
+        user: req.user?.id
+      });
+      res.status(500).json({ 
+        error: 'Erro interno do servidor',
+        details: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -51,8 +71,8 @@ export class WhatsAppQRController {
         success: true, 
         message: 'Sessão desconectada com sucesso' 
       });
-    } catch (error: any) {
-      logger.error('Erro ao desconectar sessão WhatsApp', { error: error.message });
+    } catch (error) {
+      logger.error('Erro ao desconectar sessão WhatsApp', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
@@ -75,8 +95,8 @@ export class WhatsAppQRController {
       logger.info('Status da sessão verificado', { sessionId, companyId, status });
 
       res.json(status);
-    } catch (error: any) {
-      logger.error('Erro ao verificar status da sessão', { error: error.message });
+    } catch (error) {
+      logger.error('Erro ao verificar status da sessão', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
@@ -89,8 +109,8 @@ export class WhatsAppQRController {
       logger.info('Sessões WhatsApp listadas', { companyId, count: sessions.length });
 
       res.json({ sessions });
-    } catch (error: any) {
-      logger.error('Erro ao listar sessões WhatsApp', { error: error.message });
+    } catch (error) {
+      logger.error('Erro ao listar sessões WhatsApp', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
@@ -121,8 +141,8 @@ export class WhatsAppQRController {
       } else {
         res.status(500).json({ error: 'Erro ao enviar mensagem' });
       }
-    } catch (error: any) {
-      logger.error('Erro ao enviar mensagem WhatsApp', { error: error.message });
+    } catch (error) {
+      logger.error('Erro ao enviar mensagem WhatsApp', { error: error instanceof Error ? error.message : String(error) });
       res.status(500).json({ error: 'Erro interno do servidor' });
     }
   }
