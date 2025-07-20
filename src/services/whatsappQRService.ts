@@ -221,6 +221,13 @@ class WhatsAppQRService {
         
         const qrCode = await qrCodePromise;
         
+        logger.info('Sessão criada com sucesso', { 
+          sessionId, 
+          hasQRCode: !!qrCode,
+          qrCodeLength: qrCode?.length,
+          sessionsInMemory: this.sessions.size
+        });
+        
         return {
           sessionId,
           qrCode
@@ -317,16 +324,64 @@ class WhatsAppQRService {
   }
 
   async getSessionStatus(sessionId: string): Promise<{ isConnected: boolean; phoneNumber?: string; qrCode?: string }> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
+    try {
+      logger.info('Verificando status da sessão', { sessionId });
+      
+      const session = this.sessions.get(sessionId);
+      
+      if (session) {
+        logger.info('Sessão encontrada na memória', { 
+          sessionId, 
+          isConnected: session.isConnected, 
+          hasQRCode: !!session.qrCode,
+          phoneNumber: session.phoneNumber 
+        });
+        
+        return {
+          isConnected: session.isConnected,
+          phoneNumber: session.phoneNumber,
+          qrCode: session.qrCode
+        };
+      } else {
+        logger.warn('Sessão não encontrada na memória', { sessionId });
+        
+        // Verificar se existe no banco de dados
+        try {
+          const dbSession = await prisma.whatsAppSession.findFirst({
+            where: { sessionId }
+          });
+          
+          if (dbSession) {
+            logger.info('Sessão encontrada no banco de dados', { 
+              sessionId, 
+              isConnected: dbSession.isConnected,
+              isActive: dbSession.isActive 
+            });
+            
+            return {
+              isConnected: dbSession.isConnected,
+              phoneNumber: dbSession.phoneNumber || undefined,
+              qrCode: undefined // QR Code só existe na memória
+            };
+          } else {
+            logger.warn('Sessão não encontrada no banco de dados', { sessionId });
+            return { isConnected: false };
+          }
+        } catch (dbError) {
+          logger.error('Erro ao buscar sessão no banco', { 
+            error: dbError instanceof Error ? dbError.message : String(dbError), 
+            sessionId 
+          });
+          return { isConnected: false };
+        }
+      }
+    } catch (error) {
+      logger.error('Erro ao verificar status da sessão', { 
+        error: error instanceof Error ? error.message : String(error), 
+        sessionId 
+      });
       return { isConnected: false };
     }
-
-    return {
-      isConnected: session.isConnected,
-      phoneNumber: session.phoneNumber,
-      qrCode: session.qrCode
-    };
   }
 
   async getCompanySessions(companyId: string): Promise<any[]> {
