@@ -3,6 +3,8 @@ import QRCode from 'qrcode';
 import { io } from '../index';
 import prisma from '../utils/database';
 import logger from '../utils/logger';
+import path from 'path';
+import fs from 'fs';
 
 interface WhatsAppSession {
   client: Client;
@@ -18,249 +20,200 @@ class WhatsAppQRService {
   private sessions: Map<string, WhatsAppSession> = new Map();
 
   async createSession(companyId: string, sessionName: string): Promise<{ sessionId: string; qrCode: string }> {
-    try {
-      logger.info('Iniciando criação de sessão WhatsApp', { companyId, sessionName });
-      
-      // Verificar se o diretório de sessões existe
-      const fs = require('fs');
-      const path = require('path');
-      const sessionsDir = path.join(process.cwd(), 'sessions', companyId);
-      
-      if (!fs.existsSync(sessionsDir)) {
-        fs.mkdirSync(sessionsDir, { recursive: true });
-        logger.info('Diretório de sessões criado', { sessionsDir });
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    logger.info('Criando sessão WhatsApp', { companyId, sessionName, sessionId });
+    
+    // Criar diretório de sessões
+    const sessionsDir = path.join(process.cwd(), 'sessions', companyId);
+    if (!fs.existsSync(sessionsDir)) {
+      fs.mkdirSync(sessionsDir, { recursive: true });
+    }
+    
+    const client = new Client({
+      authStrategy: new LocalAuth({
+        clientId: sessionId,
+        dataPath: `./sessions/${companyId}`
+      }),
+      puppeteer: {
+        headless: true,
+        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser',
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--no-first-run',
+          '--disable-extensions',
+          '--disable-plugins',
+          '--disable-images',
+          '--disable-javascript',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-field-trial-config',
+          '--disable-ipc-flooding-protection',
+          '--enable-logging',
+          '--log-level=0',
+          '--silent-launch',
+          '--disable-default-apps',
+          '--disable-sync',
+          '--disable-translate',
+          '--hide-scrollbars',
+          '--mute-audio',
+          '--no-default-browser-check',
+          '--no-experiments',
+          '--no-pings',
+          '--single-process',
+          '--disable-background-networking',
+          '--metrics-recording-only',
+          '--safebrowsing-disable-auto-update',
+          '--ignore-certificate-errors',
+          '--ignore-ssl-errors',
+          '--ignore-certificate-errors-spki-list',
+          '--disable-web-security',
+          '--allow-running-insecure-content',
+          '--disable-features=VizDisplayCompositor'
+        ],
+        timeout: 180000, // Aumentado para 3 minutos
+        defaultViewport: null,
+        ignoreHTTPSErrors: true
       }
+    });
+
+    const session: WhatsAppSession = {
+      client,
+      qrCode: undefined,
+      isConnected: false,
+      companyId,
+      sessionId,
+      sessionName
+    };
+
+    this.sessions.set(sessionId, session);
+
+    // Promise para aguardar o QR Code com retry
+    const qrCodePromise = new Promise<string>((resolve, reject) => {
+      let retryCount = 0;
+      const maxRetries = 3;
       
-      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      
-      logger.info('Criando cliente WhatsApp', { sessionId });
-
-      // Configurações mais simples do Puppeteer para evitar problemas
-      const puppeteerArgs = [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-first-run',
-        '--disable-extensions',
-        '--disable-plugins',
-        '--disable-images',
-        '--disable-javascript',
-        '--disable-background-timer-throttling',
-        '--disable-backgrounding-occluded-windows',
-        '--disable-renderer-backgrounding',
-        '--disable-field-trial-config',
-        '--disable-ipc-flooding-protection',
-        '--enable-logging',
-        '--log-level=0',
-        '--silent-launch',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--disable-translate',
-        '--hide-scrollbars',
-        '--mute-audio',
-        '--no-default-browser-check',
-        '--no-experiments',
-        '--no-pings',
-        '--single-process',
-        '--disable-background-networking',
-        '--metrics-recording-only',
-        '--safebrowsing-disable-auto-update',
-        '--ignore-certificate-errors',
-        '--ignore-ssl-errors',
-        '--ignore-certificate-errors-spki-list'
-      ];
-
-      // Verificar se estamos em produção e ajustar configurações
-      if (process.env.NODE_ENV === 'production') {
-        puppeteerArgs.push('--disable-dev-shm-usage');
-        puppeteerArgs.push('--disable-accelerated-2d-canvas');
-        puppeteerArgs.push('--disable-web-security');
-      }
-
-      const client = new Client({
-        authStrategy: new LocalAuth({
-          clientId: sessionId,
-          dataPath: `./sessions/${companyId}`
-        }),
-        puppeteer: {
-          headless: true,
-          args: puppeteerArgs,
-          timeout: 120000, // Aumentar timeout para 2 minutos
-          executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
-        }
-      });
-
-      const session: WhatsAppSession = {
-        client,
-        qrCode: undefined,
-        isConnected: false,
-        companyId,
-        sessionId,
-        sessionName
-      };
-
-      this.sessions.set(sessionId, session);
-
-      logger.info('Cliente WhatsApp criado', { sessionId });
-
-      // Promise para aguardar o QR Code
-      let qrCodePromise: Promise<string> | null = null;
-      let qrCodeResolve: ((value: string) => void) | null = null;
-
-      // Eventos do cliente WhatsApp
-      client.on('qr', async (qr) => {
+      const attemptInitialization = async () => {
         try {
-          logger.info('QR Code recebido do WhatsApp', { sessionId });
-          const qrCodeDataURL = await QRCode.toDataURL(qr);
-          session.qrCode = qrCodeDataURL;
-          
-          // Resolver a promise do QR Code
-          if (qrCodeResolve) {
-            qrCodeResolve(qrCodeDataURL);
-          }
-          
-          // Emitir QR Code via WebSocket
-          io.to(`company-${companyId}`).emit('whatsapp-qr-generated', {
-            sessionId,
-            qrCode: qrCodeDataURL,
-            sessionName
+          client.on('qr', async (qr) => {
+            try {
+              logger.info('QR Code recebido', { sessionId });
+              const qrCodeDataURL = await QRCode.toDataURL(qr);
+              session.qrCode = qrCodeDataURL;
+              resolve(qrCodeDataURL);
+            } catch (error) {
+              logger.error('Erro ao gerar QR Code', { error: error instanceof Error ? error.message : String(error), sessionId });
+              reject(error);
+            }
           });
 
-          logger.info('QR Code gerado e emitido', { sessionId, companyId });
-        } catch (error) {
-          logger.error('Erro ao gerar QR Code', { error: error instanceof Error ? error.message : String(error), sessionId });
-        }
-      });
+          client.on('ready', () => {
+            logger.info('WhatsApp pronto para uso', { sessionId });
+            session.isConnected = true;
+            session.qrCode = undefined;
+            session.phoneNumber = client.info.wid.user;
 
-      client.on('ready', async () => {
-        try {
-          logger.info('WhatsApp pronto para uso', { sessionId });
-          session.isConnected = true;
-          session.qrCode = undefined;
-          session.phoneNumber = client.info.wid.user;
+            // Atualizar sessão no banco de dados com o número de telefone
+            prisma.whatsAppSession.updateMany({
+              where: { sessionId },
+              data: {
+                phoneNumber: session.phoneNumber,
+                isConnected: true,
+                updatedAt: new Date()
+              }
+            }).catch(error => {
+              logger.error('Erro ao atualizar sessão no banco', { error: error instanceof Error ? error.message : String(error), sessionId });
+            });
 
-          // Atualizar sessão no banco de dados com o número de telefone
-          await prisma.whatsAppSession.updateMany({
-            where: { sessionId },
-            data: {
+            // Emitir evento de conexão
+            io.to(`company-${companyId}`).emit('whatsapp-connected', {
+              sessionId,
               phoneNumber: session.phoneNumber,
-              isConnected: true,
-              updatedAt: new Date()
-            }
+              sessionName
+            });
+
+            logger.info('WhatsApp conectado com sucesso', { 
+              sessionId, 
+              phoneNumber: session.phoneNumber, 
+              companyId,
+              sessionName 
+            });
+            
+            resolve(''); // Conectado sem QR Code
           });
 
-          // Emitir evento de conexão
-          io.to(`company-${companyId}`).emit('whatsapp-connected', {
-            sessionId,
-            phoneNumber: session.phoneNumber,
-            sessionName
+          client.on('auth_failure', (msg) => {
+            logger.error('Falha na autenticação', { msg, sessionId });
+            reject(new Error('Falha na autenticação'));
           });
 
-          logger.info('WhatsApp conectado com sucesso', { 
-            sessionId, 
-            phoneNumber: session.phoneNumber, 
-            companyId,
-            sessionName 
-          });
-        } catch (error) {
-          logger.error('Erro ao processar conexão', { error: error instanceof Error ? error.message : String(error), sessionId });
-        }
-      });
-
-      client.on('disconnected', async (reason) => {
-        try {
-          session.isConnected = false;
-          session.qrCode = undefined;
-
-          // Emitir evento de desconexão
-          io.to(`company-${companyId}`).emit('whatsapp-disconnected', {
-            sessionId,
-            reason,
-            sessionName
+          client.on('disconnected', (reason) => {
+            logger.info('WhatsApp desconectado', { reason, sessionId });
+            session.isConnected = false;
           });
 
-          // Remover sessão
-          this.sessions.delete(sessionId);
+          // Configurar handlers de mensagens
+          client.on('message', (message) => {
+            this.handleIncomingMessage(session, message);
+          });
 
-          logger.info('WhatsApp desconectado', { sessionId, reason, companyId });
-        } catch (error) {
-          logger.error('Erro ao processar desconexão', { error: error instanceof Error ? error.message : String(error), sessionId });
-        }
-      });
-
-      client.on('message', async (message) => {
-        try {
-          await this.handleIncomingMessage(session, message);
-        } catch (error) {
-          logger.error('Erro ao processar mensagem', { error: error instanceof Error ? error.message : String(error), sessionId });
-        }
-      });
-
-      client.on('auth_failure', (msg) => {
-        logger.error('Falha na autenticação WhatsApp', { sessionId, message: msg });
-      });
-
-      client.on('loading_screen', (percent, message) => {
-        logger.info('Carregando WhatsApp', { sessionId, percent, message });
-      });
-
-      // Inicializar cliente
-      logger.info('Inicializando cliente WhatsApp', { sessionId });
-      
-      try {
-        await client.initialize();
-        logger.info('Cliente WhatsApp inicializado com sucesso', { sessionId });
-        
-        // Aguardar QR Code por até 30 segundos
-        qrCodePromise = new Promise<string>((resolve, reject) => {
-          qrCodeResolve = resolve;
-          
-          // Timeout de 30 segundos
+          // Timeout de 2 minutos
           setTimeout(() => {
-            if (session.qrCode) {
-              resolve(session.qrCode);
-            } else {
-              reject(new Error('Timeout aguardando QR Code'));
-            }
-          }, 30000);
-        });
-        
-        const qrCode = await qrCodePromise;
-        
-        logger.info('Sessão criada com sucesso', { 
-          sessionId, 
-          hasQRCode: !!qrCode,
-          qrCodeLength: qrCode?.length,
-          sessionsInMemory: this.sessions.size
-        });
-        
-        // Salvar sessão no banco de dados assim que for criada
-        await this.saveInitialSessionToDatabase(sessionId, sessionName, companyId);
-        
-        return {
-          sessionId,
-          qrCode
-        };
-      } catch (initError) {
-        logger.error('Erro ao inicializar cliente WhatsApp', { 
-          error: initError instanceof Error ? initError.message : String(initError),
-          stack: initError instanceof Error ? initError.stack : undefined,
-          sessionId 
-        });
-        
-        // Limpar sessão em caso de erro
-        this.sessions.delete(sessionId);
-        throw new Error(`Falha ao inicializar WhatsApp: ${initError instanceof Error ? initError.message : String(initError)}`);
-      }
+            reject(new Error('Timeout aguardando QR Code'));
+          }, 120000);
+          
+        } catch (error) {
+          logger.error('Erro na inicialização', { error: error instanceof Error ? error.message : String(error), sessionId, retryCount });
+          
+          if (retryCount < maxRetries) {
+            retryCount++;
+            logger.info('Tentando novamente', { retryCount, sessionId });
+            setTimeout(attemptInitialization, 5000); // Esperar 5 segundos antes de tentar novamente
+          } else {
+            reject(error);
+          }
+        }
+      };
+      
+      attemptInitialization();
+    });
+
+    try {
+      logger.info('Inicializando cliente WhatsApp', { sessionId });
+      await client.initialize();
+      logger.info('Cliente inicializado com sucesso', { sessionId });
+      
+      const qrCode = await qrCodePromise;
+      
+      logger.info('Sessão criada com sucesso', { 
+        sessionId, 
+        hasQRCode: !!qrCode,
+        qrCodeLength: qrCode?.length,
+        sessionsInMemory: this.sessions.size
+      });
+      
+      // Salvar sessão no banco de dados assim que for criada
+      await this.saveInitialSessionToDatabase(sessionId, sessionName, companyId);
+      
+      return {
+        sessionId,
+        qrCode
+      };
     } catch (error) {
       logger.error('Erro ao criar sessão WhatsApp', { 
-        error: error instanceof Error ? error.message : String(error), 
+        error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
-        companyId, 
-        sessionName 
+        sessionId 
       });
-      throw error;
+      
+      // Limpar sessão da memória em caso de erro
+      this.sessions.delete(sessionId);
+      
+      throw new Error(`Falha ao inicializar WhatsApp: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
