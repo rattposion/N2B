@@ -46,8 +46,6 @@ class WhatsAppQRService {
           '--no-first-run',
           '--disable-extensions',
           '--disable-plugins',
-          '--disable-images',
-          '--disable-javascript',
           '--disable-background-timer-throttling',
           '--disable-backgrounding-occluded-windows',
           '--disable-renderer-backgrounding',
@@ -202,11 +200,6 @@ class WhatsAppQRService {
       });
       
       return { sessionId, qrCode };
-      
-      return {
-        sessionId,
-        qrCode
-      };
     } catch (error) {
       logger.error('Erro ao criar sessão WhatsApp', { 
         error: error instanceof Error ? error.message : String(error),
